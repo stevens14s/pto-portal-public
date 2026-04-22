@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Register</title>
+</head>
+<body>
+<h2>Create Account</h2>
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    {% for message in messages %}
+      <div style="background:#fff3cd; color:#856404; padding:10px; margin-bottom:10px; border:1px solid #ffeeba; border-radius:4px;">
+        {{ message }}
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<form method="POST">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; max-width:540px;">
+        <div><label>First Name</label><br><input name="first_name" required></div>
+        <div><label>Last Name</label><br><input name="last_name" required></div>
+    </div>
+    <br>
+    <label>Username</label><br>
+    <input name="username" placeholder="Username" required style="max-width:540px;">
+    <br><br>
+    <input id="password" name="password" type="password" placeholder="Password" required style="max-width:540px;">
+    <br><br>
+    <input id="confirm_password" name="confirm_password" type="password" placeholder="Confirm Password" required style="max-width:540px;">
+    <div id="password-match-message" style="display:none; color:#b91c1c; margin-top:8px;">Passwords do not match.</div>
+    <br><br>
+    <label>Email</label><br>
+    <input name="email" type="email" required style="max-width:540px;">
+    <br><br>
+    <label>Phone Number</label><br>
+    <input id="phone" name="phone" required inputmode="numeric" maxlength="12" placeholder="123-456-7890" pattern="\d{3}-\d{3}-\d{4}" title="Please enter the phone number as 123-456-7890" style="max-width:540px;">
+    <div id="phone-format-message" style="display:none; color:#b91c1c; margin-top:8px;">Phone number must be in 123-456-7890 format.</div>
+    <br><br>
+    <div style="background:#eef6ff; color:#1e3a8a; padding:10px; margin-bottom:16px; border:1px solid #bfdbfe; border-radius:4px; max-width:540px;">
+        Team and site will be assigned by a Training Lieutenant, Captain, or Director after your account is created.
+    </div>
+    <button type="submit">Register</button>
+</form>
+<br>
+<a href="/">Back to Login</a>
+<script>
+const registerForm = document.querySelector('form');
+const passwordInput = document.getElementById('password');
+const confirmPasswordInput = document.getElementById('confirm_password');
+const passwordMatchMessage = document.getElementById('password-match-message');
+const phoneInput = document.getElementById('phone');
+const phoneFormatMessage = document.getElementById('phone-format-message');
+function updatePasswordMatchMessage() {
+    const showMismatch = confirmPasswordInput.value !== "" && passwordInput.value !== confirmPasswordInput.value;
+    passwordMatchMessage.style.display = showMismatch ? 'block' : 'none';
+    confirmPasswordInput.setCustomValidity(showMismatch ? 'Passwords do not match.' : '');
+}
+function formatPhoneValue(value) {
+    const digits = value.replace(/\D/g, '').slice(0, 10);
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+function updatePhoneValidation() {
+    phoneInput.value = formatPhoneValue(phoneInput.value);
+    const valid = /^\d{3}-\d{3}-\d{4}$/.test(phoneInput.value);
+    const showMessage = phoneInput.value !== '' && !valid;
+    phoneFormatMessage.style.display = showMessage ? 'block' : 'none';
+    phoneInput.setCustomValidity(showMessage ? 'Phone number must be in 123-456-7890 format.' : '');
+}
+passwordInput.addEventListener('input', updatePasswordMatchMessage);
+confirmPasswordInput.addEventListener('input', updatePasswordMatchMessage);
+phoneInput.addEventListener('input', updatePhoneValidation);
+phoneInput.addEventListener('blur', updatePhoneValidation);
+registerForm.addEventListener('submit', (event) => {
+    updatePasswordMatchMessage();
+    updatePhoneValidation();
+    if (passwordInput.value !== confirmPasswordInput.value || !/^\d{3}-\d{3}-\d{4}$/.test(phoneInput.value)) event.preventDefault();
+});
+</script>
+</body>
+</html>

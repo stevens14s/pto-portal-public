@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Manage Users</h2>
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    {% for message in messages %}
+      <div style="background:#d4edda; color:#155724; padding:10px; margin-bottom:10px; border:1px solid #c3e6cb; border-radius:4px;">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+<div class="section-card" style="overflow-x:auto;">
+<table>
+    <tr>
+        <th>Name</th><th>Username</th><th>Role</th><th>Rank</th><th>Site</th><th>Team</th><th>Email</th><th>Phone</th>
+        {% if is_full_admin %}<th>Update Role</th><th>Update Rank</th>{% endif %}
+        <th>Update Site</th><th>Update Team</th>
+        {% if is_full_admin %}<th>Reset Password</th><th>Remove PTO</th><th>Delete User</th>{% endif %}
+    </tr>
+    {% for user in users %}
+    <tr>
+        <td>{{ ((user[8] ~ ' ' ~ user[9]).strip()) if (user[8] or user[9]) else user[1] }}</td>
+        <td>{{ user[1] }}</td>
+        <td>{{ user[2] }}</td>
+        <td>{{ user[3] if user[3] else "Officer" }}</td>
+        <td>{{ user[7] if user[7] else "Unassigned" }}</td>
+        <td>{{ user[6] if user[6] else "Unassigned" }}</td>
+        <td>{{ user[4] if user[4] else "" }}</td>
+        <td>{{ user[5] if user[5] else "" }}</td>
+        {% if is_full_admin %}
+        <td><form method="POST"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="update_role"><select name="role"><option value="officer" {% if user[2] == "officer" %}selected{% endif %}>Officer Access</option><option value="admin" {% if user[2] == "admin" %}selected{% endif %}>Admin Access</option></select><button type="submit">Update</button></form></td>
+        <td><form method="POST"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="update_rank"><select name="rank"><option value="Officer" {% if user[3] == "Officer" %}selected{% endif %}>Officer</option><option value="Sergeant" {% if user[3] == "Sergeant" %}selected{% endif %}>Sergeant</option><option value="Lieutenant" {% if user[3] == "Lieutenant" %}selected{% endif %}>Lieutenant</option><option value="Training Lieutenant" {% if user[3] == "Training Lieutenant" %}selected{% endif %}>Training Lieutenant</option><option value="Captain" {% if user[3] == "Captain" %}selected{% endif %}>Captain</option><option value="Director" {% if user[3] == "Director" %}selected{% endif %}>Director</option></select><button type="submit">Update</button></form></td>
+        {% endif %}
+        <td><form method="POST"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="update_site"><select name="site">{% for site in site_options %}<option value="{{ site }}" {% if user[7] == site %}selected{% endif %}>{{ site }}</option>{% endfor %}</select><button type="submit">Update</button></form></td>
+        <td><form method="POST"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="update_team"><select name="team"><option value="" {% if not user[6] %}selected{% endif %}>Unassigned</option><option value="Red" {% if user[6] == "Red" %}selected{% endif %}>Red</option><option value="Black" {% if user[6] == "Black" %}selected{% endif %}>Black</option><option value="Gold" {% if user[6] == "Gold" %}selected{% endif %}>Gold</option><option value="Blue" {% if user[6] == "Blue" %}selected{% endif %}>Blue</option><option value="Command Staff" {% if user[6] == "Command Staff" %}selected{% endif %}>Command Staff</option></select><button type="submit">Update</button></form></td>
+        {% if is_full_admin %}
+        <td><form method="POST"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="reset_password"><input type="text" name="new_password" placeholder="Temporary password" required style="padding:5px;"><button type="submit">Reset</button></form></td>
+        <td><form method="POST" onsubmit="return confirm('Remove all PTO requests for this user?');"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="clear_pto"><button type="submit">Clear PTO</button></form></td>
+        <td><form method="POST" onsubmit="return confirm('Delete this user and all of their related records?');"><input type="hidden" name="user_id" value="{{ user[0] }}"><input type="hidden" name="action" value="delete_user"><button type="submit" style="background:#e74c3c; color:white; border:none; padding:6px 10px;">Delete</button></form></td>
+        {% endif %}
+    </tr>
+    {% endfor %}
+</table>
+</div>
+{% endblock %}

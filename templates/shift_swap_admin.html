@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2>Shift Swap Review</h2>
+<p style="color:#666; margin-top:0;">Captain and above can review shift swaps where one officer picks up a date and the other covers the requester's day off here.</p>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div style="margin: 15px 0;">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:10px; border:1px solid #ffeeba; border-radius:4px; margin-bottom:10px;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+{% if shift_swaps %}
+<table>
+<tr>
+    <th>Requester</th>
+    <th>Swap With</th>
+    <th>Shift Requester Takes</th>
+    <th>Day Requester Needs Off</th>
+    <th>Reason</th>
+    <th>Status</th>
+    <th>Reviewed By</th>
+    <th>Supervisor Note</th>
+    <th>Action</th>
+</tr>
+
+{% for s in shift_swaps %}
+<tr class="{{ s[6] }}">
+    <td>{{ s[10] }}</td>
+    <td>{{ s[11] if s[11] else "Unassigned" }}</td>
+    <td>{{ s[3] }}</td>
+    <td>{{ s[4] }}</td>
+    <td style="text-align:left;">{{ s[5] }}</td>
+    <td>{{ s[6] }}</td>
+    <td>{{ s[7] if s[7] else "-" }}</td>
+    <td style="text-align:left; min-width:220px;">{{ s[9] if s[9] else "-" }}</td>
+    <td>
+        {% if s[6] == "Pending" %}
+        <form method="POST" style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+            <input type="hidden" name="swap_id" value="{{ s[0] }}">
+            <textarea name="decision_note" rows="2" placeholder="Optional decision note" style="min-width:200px;">{{ s[9] if s[9] else "" }}</textarea>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn approve" name="action" value="Approved">Approve</button>
+                <button class="btn deny" name="action" value="Denied">Deny</button>
+            </div>
+        </form>
+        {% else %}
+        <span style="color:#666;">Reviewed</span>
+        {% endif %}
+    </td>
+</tr>
+{% endfor %}
+
+</table>
+{% else %}
+<p style="color:#666;">No shift swap requests submitted yet.</p>
+{% endif %}
+
+{% endblock %}

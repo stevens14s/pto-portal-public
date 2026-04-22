@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">PTO Calendar</h1>
+        <p style="margin:6px 0 0 0; color:#64748b;">Approved time off{% if site_scope %} for {{ site_scope }}{% else %} across all visible sites{% endif %}.{% if show_calendar_details %} Click a day to see a clean officer list below.{% endif %}</p>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="{{ url_for('calendar', month=prev_month, year=prev_year) }}" class="btn btn-secondary">Previous</a>
+        <div class="chip" style="background:#e2e8f0; color:#1e293b; padding:8px 14px;">{{ month_name }} {{ year }}</div>
+        <a href="{{ url_for('calendar', month=next_month, year=next_year) }}" class="btn btn-secondary">Next</a>
+    </div>
+</div>
+<div class="summary-grid" style="margin-bottom:20px;">
+    <div class="summary-card"><h3>Approved Entries This Month</h3><p>{{ total_approved }}</p></div>
+    <div class="summary-card"><h3>Days With Time Off</h3><p>{{ visible_days }}</p></div>
+    <div class="summary-card"><h3>View Scope</h3><p style="font-size:18px;">{{ site_scope if site_scope else "All Sites" }}</p></div>
+    <div class="summary-card"><h3>Legend</h3><div style="display:flex; gap:8px; flex-wrap:wrap;"><span class="chip" style="background:#dcfce7; color:#166534;">1 Off</span><span class="chip" style="background:#fef3c7; color:#92400e;">2 Off</span><span class="chip" style="background:#fecaca; color:#991b1b;">3+ Off</span></div></div>
+</div>
+<div class="section-card" style="overflow-x:auto;">
+    <table style="table-layout:fixed;">
+        <tr><th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr>
+        {% for week in month_days %}
+        <tr>
+            {% for day in week %}
+                {% if day == 0 %}
+                    <td style="background:#f8fafc;"></td>
+                {% else %}
+                    {% set date_str = year ~ "-" ~ "%02d"|format(month) ~ "-" ~ "%02d"|format(day) %}
+                    {% set count = calendar_days.get(date_str, 0) %}
+                    <td style="min-height:120px; text-align:left; {% if count >= 3 %}background:#fee2e2;{% elif count == 2 %}background:#fef3c7;{% elif count == 1 %}background:#dcfce7;{% else %}background:white;{% endif %}">
+                        <div style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px;">
+                            <strong style="font-size:16px;">{{ day }}</strong>
+                            <span class="chip" style="background:rgba(255,255,255,0.75); color:#334155;">{{ count }} off</span>
+                        </div>
+                        {% if count == 0 %}
+                            <span style="font-size:12px; color:#94a3b8;">No approved PTO</span>
+                        {% elif show_calendar_details %}
+                            <button type="button" class="btn btn-secondary" style="width:100%;" onclick="showDayDetails('{{ date_str }}')">View Details</button>
+                        {% else %}
+                            <span style="font-size:12px; color:#475569;">Approved count only</span>
+                        {% endif %}
+                    </td>
+                {% endif %}
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% if show_calendar_details %}
+<div class="section-card" id="calendar-detail-panel">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+        <div><h2 id="calendar-detail-title" style="margin:0; color:#2c3e50;">Select a Day</h2><p id="calendar-detail-subtitle" class="muted" style="margin:6px 0 0 0;">Click a day on the calendar to see approved people off.</p></div>
+        <span id="calendar-detail-count" class="chip" style="background:#e2e8f0; color:#1e293b;">0 off</span>
+    </div>
+    <div id="calendar-detail-list" style="margin-top:16px; display:grid; gap:10px;"></div>
+</div>
+<script>
+const calendarDetails = {{ calendar_people | tojson }};
+function showDayDetails(dateStr) {
+    const items = calendarDetails[dateStr] || [];
+    document.getElementById('calendar-detail-title').textContent = `Approved Off: ${dateStr}`;
+    document.getElementById('calendar-detail-subtitle').textContent = items.length ? 'Approved requests visible for this day.' : 'No approved PTO requests for this day.';
+    document.getElementById('calendar-detail-count').textContent = `${items.length} off`;
+    const container = document.getElementById('calendar-detail-list');
+    container.innerHTML = '';
+    if (!items.length) {
+        container.innerHTML = '<div class="muted">No approved PTO requests for this day.</div>';
+        return;
+    }
+    items.forEach((item) => {
+        const card = document.createElement('div');
+        card.style.padding = '12px';
+        card.style.border = '1px solid #dbe4ef';
+        card.style.borderRadius = '10px';
+        card.style.background = '#f8fbff';
+        card.innerHTML = `<strong>${item.display_name}</strong><div class="muted" style="margin-top:4px;">${item.rank} · ${item.request_kind}</div>`;
+        container.appendChild(card);
+    });
+}
+</script>
+{% endif %}
+{% endblock %}

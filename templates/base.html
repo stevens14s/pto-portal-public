@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PTO Operations Portal</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background-color: #f4f6f9; color: #243447; }
+        .navbar { background: #1f2d3d; padding: 15px 20px; color: white; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+        .navbar a { color: white; text-decoration: none; font-weight: bold; }
+        .navbar a:hover { text-decoration: underline; }
+        .container { padding: 20px; }
+        .section-card { background: white; border: 1px solid #ddd; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+        .summary-card { background: white; border: 1px solid #ddd; border-radius: 12px; padding: 18px; }
+        .summary-card h3 { margin: 0 0 10px 0; color: #2c3e50; font-size: 15px; }
+        .summary-card p { margin: 0; font-size: 26px; font-weight: bold; }
+        .chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: bold; }
+        .notification-item { border-bottom: 1px solid #eceff3; padding: 12px 0; }
+        .notification-item:last-child { border-bottom: none; padding-bottom: 0; }
+        .tab-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+        .tab-button { border: 1px solid #d0d7de; background: #f8fafc; color: #1f2d3d; border-radius: 999px; padding: 8px 14px; cursor: pointer; font-weight: bold; }
+        .tab-button.active { background: #1f2d3d; color: white; border-color: #1f2d3d; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { padding: 10px; border: 1px solid #ddd; text-align: center; vertical-align: top; }
+        th { background: #34495e; color: white; }
+        .btn { padding: 7px 12px; border: none; border-radius: 7px; cursor: pointer; font-weight: bold; background: #1f2d3d; color: white; text-decoration: none; }
+        .btn-secondary { background: #e2e8f0; color: #1f2937; }
+        .btn-link { display: inline-block; padding: 7px 12px; border-radius: 7px; background: #dbeafe; color: #1d4ed8; text-decoration: none; font-weight: bold; }
+        .approve { background: #2ecc71; color: white; }
+        .deny { background: #e74c3c; color: white; }
+        .muted { color: #64748b; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 7px; box-sizing: border-box; }
+        textarea { min-height: 72px; resize: vertical; }
+        .Pending { background: #fff3cd; }
+        .Approved { background: #d4edda; }
+        .Denied { background: #f8d7da; }
+    </style>
+</head>
+<body>
+<div class="navbar">
+    <span style="font-weight:bold; margin-right:20px;">PTO Operations Portal</span>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/request">Request PTO</a>
+    <a href="{{ url_for('shift_swap_request') }}">Shift Swap</a>
+    <a href="{{ url_for('calendar') }}">Calendar</a>
+    <a href="{{ url_for('account_settings') }}">My Account</a>
+    {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Captain", "Director"]) %}
+    <a href="/admin">PTO Review</a>
+    <a href="{{ url_for('shift_swap_admin') }}">Swap Review</a>
+    {% endif %}
+    {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Lieutenant", "Training Lieutenant", "Captain", "Director"]) %}
+    <a href="{{ url_for('audit_history') }}">Audit History</a>
+    <a href="/call_list">Call List</a>
+    {% endif %}
+    {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Training Lieutenant", "Captain", "Director"]) %}
+    <a href="/manage_users">Manage Users</a>
+    {% endif %}
+    <a href="/logout">Logout</a>
+</div>
+<div class="container">
+    {% block content %}{% endblock %}
+</div>
+</body>
+</html>

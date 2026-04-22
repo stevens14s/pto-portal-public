@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">PTO Review</h1>
+        <p style="margin:6px 0 0 0; color:#666;">Command review queue for pending and processed PTO requests{% if site_scope %} at {{ site_scope }}{% else %} across all sites{% endif %}.</p>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div class="section-card">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:10px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<div class="summary-grid" style="margin-bottom:20px;">
+    <div class="summary-card">
+        <h3>Pending</h3>
+        <p>{{ pending_count }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Approved</h3>
+        <p>{{ approved_count }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Denied</h3>
+        <p>{{ denied_count }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Site Scope</h3>
+        <p style="font-size:18px;">{{ site_scope if site_scope else "All Sites" }}</p>
+    </div>
+</div>
+
+<div class="section-card">
+    <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+            <h2 style="margin:0; color:#2c3e50;">Clear Tools</h2>
+            <p class="muted" style="margin:6px 0 0 0;">Captain and above can clear one request at a time or clear all approved/denied requests for the visible site scope.</p>
+        </div>
+        <form method="POST" onsubmit="return confirm('Clear all approved/denied PTO requests for this site scope?');" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <input type="hidden" name="action" value="clear_decided">
+            <label style="display:flex; gap:8px; align-items:center; white-space:nowrap;">
+                <input type="checkbox" name="clear_shift_swaps" value="yes" style="width:auto;">
+                Also clear approved/denied shift swaps
+            </label>
+            <button type="submit" class="btn deny">Clear Decided Requests</button>
+        </form>
+    </div>
+</div>
+
+<div class="section-card" style="overflow-x:auto;">
+    <table>
+        <tr>
+            <th>User</th>
+            <th>Rank</th>
+            <th>Site</th>
+            <th>Team</th>
+            <th>Request Type</th>
+            <th>Special Leave</th>
+            <th>Documentation</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Status</th>
+            <th>Supervisor Note</th>
+            <th>Action</th>
+        </tr>
+        {% for r in requests %}
+        <tr class="{{ r[4] }}">
+            <td>{{ r[10] }}</td>
+            <td>{{ r[11] if r[11] else "Officer" }}</td>
+            <td>{{ r[13] if r[13] else "Unassigned" }}</td>
+            <td>{{ r[12] if r[12] else "Unassigned" }}</td>
+            <td>{{ r[7] if r[7] else "PTO" }}</td>
+            <td>{{ r[8] if r[8] else "None" }}</td>
+            <td>
+                {% if r[9] %}
+                <a href="{{ url_for('pto_document', req_id=r[0]) }}" target="_blank" class="btn btn-secondary">View</a>
+                {% else %}
+                <span class="muted">None</span>
+                {% endif %}
+            </td>
+            <td>{{ r[2] }}</td>
+            <td>{{ r[3] }}</td>
+            <td>{{ r[4] }}</td>
+            <td style="min-width:220px; text-align:left;">
+                {% if r[5] %}
+                <div style="margin-bottom:8px; color:#374151;">{{ r[5] }}</div>
+                {% else %}
+                <span class="muted">No note</span>
+                {% endif %}
+            </td>
+            <td>
+                <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+                    {% if r[4] == "Pending" %}
+                    <form method="POST" style="display:flex; gap:8px; justify-content:center; align-items:flex-start; flex-wrap:wrap;">
+                        <input type="hidden" name="req_id" value="{{ r[0] }}">
+                        <textarea name="decision_note" rows="2" placeholder="Optional decision note" style="min-width:200px;">{{ r[5] if r[5] else "" }}</textarea>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button class="btn approve" name="action" value="Approved">Approve</button>
+                            <button class="btn deny" name="action" value="Denied">Deny</button>
+                        </div>
+                    </form>
+                    {% else %}
+                    <span class="muted">Decision recorded</span>
+                    {% endif %}
+                    <form method="POST" onsubmit="return confirm('Clear this PTO request?');">
+                        <input type="hidden" name="req_id" value="{{ r[0] }}">
+                        <button class="btn btn-secondary" name="action" value="clear_single">Clear</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+
+{% endblock %}

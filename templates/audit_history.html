@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">Audit History</h1>
+        <p style="margin:6px 0 0 0; color:#666;">Track request approvals, corrections, rank changes, and other command actions{% if site_scope %} for {{ site_scope }}{% else %} across all sites{% endif %}.</p>
+    </div>
+</div>
+
+<div class="section-card">
+    <form method="GET" class="form-grid">
+        <div>
+            <label for="entity_type" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Entity</label>
+            <select id="entity_type" name="entity_type">
+                <option value="">All entities</option>
+                {% for entity_type in entity_types %}
+                <option value="{{ entity_type }}" {% if selected_entity_type == entity_type %}selected{% endif %}>{{ entity_type }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="action" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Action</label>
+            <select id="action" name="action">
+                <option value="">All actions</option>
+                {% for action in actions %}
+                <option value="{{ action }}" {% if selected_action == action %}selected{% endif %}>{{ action }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="target_user_id" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Target User</label>
+            <select id="target_user_id" name="target_user_id">
+                <option value="">All users</option>
+                {% for user in users %}
+                <option value="{{ user[0] }}" {% if selected_target_user_id == user[0]|string %}selected{% endif %}>{{ user[1] }}{% if user[2] %} ({{ user[2] }}){% endif %}{% if user[3] %} - {{ user[3] }}{% endif %}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <button type="submit" class="btn" style="background:#2c3e50; color:white;">Filter</button>
+        </div>
+    </form>
+</div>
+
+<div class="section-card">
+    {% if entries %}
+    <table>
+        <tr>
+            <th>When</th>
+            <th>Entity</th>
+            <th>Action</th>
+            <th>Site</th>
+            <th>Actor</th>
+            <th>Target</th>
+            <th>Details</th>
+        </tr>
+        {% for entry in entries %}
+        <tr>
+            <td>{{ entry.created_at }}</td>
+            <td>{{ entry.entity_type }}{% if entry.entity_id %} #{{ entry.entity_id }}{% endif %}</td>
+            <td>{{ entry.action }}</td>
+            <td>{{ entry.site_name if entry.site_name else "-" }}</td>
+            <td>{{ entry.actor_username if entry.actor_username else "-" }}</td>
+            <td>{{ entry.target_username if entry.target_username else "-" }}</td>
+            <td style="text-align:left;">{{ entry.details if entry.details else "-" }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#666; margin:0;">No audit history matched those filters.</p>
+    {% endif %}
+</div>
+
+{% endblock %}

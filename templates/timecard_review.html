@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">Timecard Review</h1>
+        <p style="margin:6px 0 0 0; color:#666;">Review pay period totals, corrections, breaks, lunch, and exceptions from one screen.</p>
+    </div>
+    <div style="text-align:right; color:#666;">
+        <div><strong>Default Pay Period:</strong> {{ pay_period_start }} to {{ pay_period_end }}</div>
+        <div><strong>Variance Threshold:</strong> {{ "%.2f"|format(variance_threshold) }} hours</div>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div class="section-card">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<div class="section-card">
+    <form method="GET" class="form-grid">
+        <div>
+            <label for="start_date" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Start Date</label>
+            <input type="date" id="start_date" name="start_date" value="{{ start_date }}">
+        </div>
+        <div>
+            <label for="end_date" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">End Date</label>
+            <input type="date" id="end_date" name="end_date" value="{{ end_date }}">
+        </div>
+        <div>
+            <label for="user_id" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Employee</label>
+            <select id="user_id" name="user_id">
+                <option value="">All employees</option>
+                {% for user in users %}
+                <option value="{{ user.id }}" {% if selected_user_id == user.id|string %}selected{% endif %}>
+                    {{ user.username }}{% if user.rank %} ({{ user.rank }}){% endif %}{% if user.team %} - {{ user.team }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button type="submit" class="btn" style="background:#2c3e50; color:white;">Filter</button>
+            <a class="btn-link" href="{{ url_for('timecard_review_export', start_date=start_date, end_date=end_date, user_id=selected_user_id) }}">Export CSV</a>
+        </div>
+    </form>
+</div>
+
+<div class="summary-grid" style="margin-bottom:20px;">
+    <div class="summary-card">
+        <h3>Employees in View</h3>
+        <p>{{ employee_summaries|length }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Exceptions</h3>
+        <p>{{ exceptions|length }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Open Shifts</h3>
+        <p>{{ employee_summaries | sum(attribute='open_shifts') }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Late Punches</h3>
+        <p>{{ employee_summaries | sum(attribute='late_punches') }}</p>
+    </div>
+</div>
+
+<div class="section-card">
+    <h2 style="margin-top:0; color:#2c3e50;">Pay Period Summary</h2>
+    {% if employee_summaries %}
+    <table>
+        <tr>
+            <th>Employee</th>
+            <th>Rank</th>
+            <th>Team / Shift</th>
+            <th>Expected Hours</th>
+            <th>Worked Hours</th>
+            <th>Variance</th>
+            <th>Unpaid Breaks</th>
+            <th>Paid Lunch</th>
+            <th>Missing Punches</th>
+            <th>Open Shifts</th>
+            <th>Unscheduled Punches</th>
+            <th>Late Punches</th>
+        </tr>
+        {% for summary in employee_summaries %}
+        <tr>
+            <td>{{ summary.username }}</td>
+            <td>{{ summary.rank }}</td>
+            <td>
+                <span class="chip" style="background:{{ summary.team_meta.background }}; color:{{ summary.team_meta.color }};">
+                    {{ summary.team_meta.label }}
+                    <span style="opacity:0.7;">{{ summary.team_meta.shift_label }}</span>
+                </span>
+            </td>
+            <td>{{ "%.2f"|format(summary.expected_total) }}</td>
+            <td>{{ "%.2f"|format(summary.worked_total) }}</td>
+            <td>{{ "%+.2f"|format(summary.variance) }}</td>
+            <td>{{ "%.0f"|format(summary.unpaid_break_minutes_total) }} min</td>
+            <td>{{ "%.0f"|format(summary.paid_lunch_minutes_total) }} min</td>
+            <td>{{ summary.missing_punches }}</td>
+            <td>{{ summary.open_shifts }}</td>
+            <td>{{ summary.unscheduled_punches }}</td>
+            <td>{{ summary.late_punches }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#666; margin:0;">No timecard data found for the selected range.</p>
+    {% endif %}
+</div>
+
+<div class="section-card">
+    <h2 style="margin-top:0; color:#2c3e50;">Exception Report</h2>
+    {% if exceptions %}
+    <table>
+        <tr>
+            <th>Severity</th>
+            <th>Type</th>
+            <th>Employee</th>
+            <th>Team</th>
+            <th>Date</th>
+            <th>Details</th>
+        </tr>
+        {% for exception in exceptions %}
+        <tr>
+            <td>
+                <span class="chip severity-{{ exception.severity }}">{{ exception.severity|capitalize }}</span>
+            </td>
+            <td>{{ exception.type }}</td>
+            <td>{{ exception.username }}</td>
+            <td>{{ exception.team if exception.team else "Unassigned" }}</td>
+            <td>{{ exception.date }}</td>
+            <td style="text-align:left;">{{ exception.details }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#666; margin:0;">No timecard exceptions found for the selected range.</p>
+    {% endif %}
+</div>
+
+<div style="display:grid; grid-template-columns:minmax(320px, 1fr) minmax(320px, 1fr); gap:20px; margin-bottom:20px;">
+    <div class="section-card">
+        <h2 style="margin-top:0; color:#2c3e50;">Resolve Missing Punch</h2>
+        <form method="POST" class="form-grid">
+            <input type="hidden" name="action" value="create_missing_entry">
+            <input type="hidden" name="start_date_filter" value="{{ start_date }}">
+            <input type="hidden" name="end_date_filter" value="{{ end_date }}">
+            <input type="hidden" name="selected_user_id_filter" value="{{ selected_user_id }}">
+
+            <div style="grid-column:1 / -1;">
+                <label for="missing_user_id" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Employee</label>
+                <select id="missing_user_id" name="missing_user_id" required>
+                    <option value="">Choose employee</option>
+                    {% for user in users %}
+                    <option value="{{ user.id }}">{{ user.username }}{% if user.rank %} ({{ user.rank }}){% endif %}{% if user.team %} - {{ user.team }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="missing_clock_date" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Date</label>
+                <input type="date" id="missing_clock_date" name="missing_clock_date" required>
+            </div>
+            <div>
+                <label for="missing_expected_hours" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Expected Hours</label>
+                <input type="number" step="0.1" id="missing_expected_hours" name="missing_expected_hours" placeholder="Use schedule default">
+            </div>
+            <div>
+                <label for="missing_clock_in" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Clock In</label>
+                <input type="datetime-local" id="missing_clock_in" name="missing_clock_in">
+            </div>
+            <div>
+                <label for="missing_clock_out" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Clock Out</label>
+                <input type="datetime-local" id="missing_clock_out" name="missing_clock_out">
+            </div>
+            <div style="grid-column:1 / -1;">
+                <label for="missing_note" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Supervisor Note</label>
+                <textarea id="missing_note" name="missing_note" placeholder="Explain why this entry is being created."></textarea>
+            </div>
+            <div style="grid-column:1 / -1;">
+                <button type="submit" class="btn" style="background:#0f766e; color:white;">Resolve Missing Punch</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="section-card">
+        <h2 style="margin-top:0; color:#2c3e50;">Correction Workflow</h2>
+        <p class="muted" style="margin-top:0;">Use the forms in the detailed table below to correct existing entries. Break and lunch totals are calculated automatically from the recorded punches.</p>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px;">
+            <div><strong>Tracked now:</strong> clock in/out, two unpaid 20-minute breaks on full shifts, one unpaid 20-minute break on half shifts, and one paid 45-minute lunch.</div>
+            <div style="margin-top:8px;"><strong>Export:</strong> use the CSV button above for payroll verification or command review.</div>
+        </div>
+    </div>
+</div>
+
+<div class="section-card">
+    <h2 style="margin-top:0; color:#2c3e50;">Detailed Entries</h2>
+    {% if entries %}
+    <table>
+        <tr>
+            <th>Date</th>
+            <th>Employee</th>
+            <th>Team / Shift</th>
+            <th>Schedule</th>
+            <th>Clock In</th>
+            <th>Clock Out</th>
+            <th>Unpaid Breaks</th>
+            <th>Paid Lunch</th>
+            <th>Worked</th>
+            <th>Expected</th>
+            <th>Flags</th>
+            <th>Correction</th>
+        </tr>
+        {% for entry in entries %}
+        <tr>
+            <td>{{ entry.clock_date }}</td>
+            <td>{{ entry.username }}<br><span class="muted">{{ entry.rank if entry.rank else "Officer" }}</span></td>
+            <td>
+                <span class="chip" style="background:{{ entry.team_meta.background }}; color:{{ entry.team_meta.color }};">
+                    {{ entry.team_meta.label }}
+                    <span style="opacity:0.7;">{{ entry.team_meta.shift_label }}</span>
+                </span>
+            </td>
+            <td>{{ entry.schedule_note if entry.schedule_note else "-" }}</td>
+            <td>{{ entry.clock_in_display }}</td>
+            <td>{{ entry.clock_out_display }}</td>
+            <td>{{ "%.0f"|format(entry.unpaid_break_minutes) }} min</td>
+            <td>{{ "%.0f"|format(entry.paid_lunch_minutes) }} min</td>
+            <td>{{ "%.2f"|format(entry.worked_hours) if entry.worked_hours is not none else "In progress" }}</td>
+            <td>{{ "%.2f"|format(entry.expected_hours) if entry.expected_hours is not none else "-" }}</td>
+            <td style="text-align:left;">
+                {% if entry.late_minutes %}
+                <div><span class="chip severity-warning">Late {{ entry.late_minutes }}m</span></div>
+                {% endif %}
+                {% if entry.expected_hours == 0 and (entry.clock_in or entry.worked_hours is not none) %}
+                <div style="margin-top:6px;"><span class="chip severity-warning">Unscheduled</span></div>
+                {% endif %}
+                {% if entry.active_segment == "break_1" %}
+                <div style="margin-top:6px;"><span class="chip severity-warning">On Break 1</span></div>
+                {% elif entry.active_segment == "break_2" %}
+                <div style="margin-top:6px;"><span class="chip severity-warning">On Break 2</span></div>
+                {% elif entry.active_segment == "lunch" %}
+                <div style="margin-top:6px;"><span class="chip severity-warning">On Lunch</span></div>
+                {% elif entry.clock_in and not entry.clock_out %}
+                <div style="margin-top:6px;"><span class="chip severity-warning">Open Shift</span></div>
+                {% endif %}
+                {% if entry.variance is not none and entry.variance|abs >= variance_threshold %}
+                <div style="margin-top:6px;"><span class="chip severity-info">{{ "%+.2f"|format(entry.variance) }}</span></div>
+                {% endif %}
+                {% if entry.corrected_by %}
+                <div style="margin-top:8px;" class="muted">Corrected by {{ entry.corrected_by }}{% if entry.corrected_at_display != "-" %} on {{ entry.corrected_at_display }}{% endif %}</div>
+                {% endif %}
+                {% if entry.supervisor_note %}
+                <div style="margin-top:6px;" class="muted">{{ entry.supervisor_note }}</div>
+                {% endif %}
+            </td>
+            <td style="min-width:280px; text-align:left;">
+                <form method="POST">
+                    <input type="hidden" name="action" value="update_entry">
+                    <input type="hidden" name="entry_id" value="{{ entry.id }}">
+                    <input type="hidden" name="start_date_filter" value="{{ start_date }}">
+                    <input type="hidden" name="end_date_filter" value="{{ end_date }}">
+                    <input type="hidden" name="selected_user_id_filter" value="{{ selected_user_id }}">
+                    <div style="display:grid; gap:8px;">
+                        <input type="datetime-local" name="clock_in" value="{{ entry.clock_in_input }}">
+                        <input type="datetime-local" name="clock_out" value="{{ entry.clock_out_input }}">
+                        <input type="number" step="0.1" name="expected_hours" value="{{ entry.expected_hours if entry.expected_hours is not none else '' }}" placeholder="Expected hours">
+                        <textarea name="supervisor_note" placeholder="Supervisor note">{{ entry.supervisor_note if entry.supervisor_note else "" }}</textarea>
+                        <button type="submit" class="btn" style="background:#1d4ed8; color:white;">Apply Correction</button>
+                    </div>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#666; margin:0;">No detailed time entries found for the selected filters.</p>
+    {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div><h1 style="margin:0; color:#2c3e50;">My Account</h1><p style="margin:6px 0 0 0; color:#666;">Update your contact information and password.</p></div>
+    <div style="text-align:right;"><p style="margin:0; font-weight:bold; font-size:18px;">{{ current_user.display_name }}</p><p style="margin:4px 0 0 0; color:#64748b;">@{{ current_user.username }}</p><p style="margin:8px 0 0 0; color:#666;">{{ current_user.rank if current_user.rank else "Officer" }}</p></div>
+</div>
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div class="section-card">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:20px;">
+    <div class="section-card">
+        <h2 style="margin-top:0;">Profile Details</h2>
+        <form method="POST">
+            <input type="hidden" name="action" value="update_profile">
+            <div class="form-grid">
+                <div><label>First Name</label><input name="first_name" value="{{ current_user.first_name }}" required></div>
+                <div><label>Last Name</label><input name="last_name" value="{{ current_user.last_name }}" required></div>
+                <div><label>Email</label><input name="email" type="email" value="{{ current_user.email }}"></div>
+                <div><label>Phone</label><input name="phone" value="{{ current_user.phone }}" placeholder="123-456-7890"></div>
+            </div>
+            <div style="margin-top:16px;"><button type="submit" class="btn">Save Profile</button></div>
+        </form>
+    </div>
+    <div class="section-card">
+        <h2 style="margin-top:0;">Change Password</h2>
+        <form method="POST">
+            <input type="hidden" name="action" value="update_password">
+            <div style="display:grid; gap:12px;">
+                <div><label>Current Password</label><input name="current_password" type="password" required></div>
+                <div><label>New Password</label><input name="new_password" type="password" required></div>
+                <div><label>Confirm New Password</label><input name="confirm_new_password" type="password" required></div>
+            </div>
+            <div style="margin-top:16px;"><button type="submit" class="btn">Update Password</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

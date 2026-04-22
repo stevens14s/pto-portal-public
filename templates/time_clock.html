@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">Daily Time Clock</h1>
+        <p style="margin:6px 0 0 0; color:#666;">Track shift hours, unpaid breaks, and paid lunch from one screen.</p>
+    </div>
+    <div style="text-align:right;">
+        <span class="chip" style="background:{{ team_meta.background }}; color:{{ team_meta.color }};">
+            {{ team_meta.label }}
+            <span style="opacity:0.7;">{{ team_meta.shift_label }}</span>
+        </span>
+        <div style="margin-top:8px; color:#666;">{{ current_user.username }} | {{ current_user.rank if current_user.rank else "Officer" }}</div>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div class="section-card">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<div class="summary-grid" style="margin-bottom:20px;">
+    <div class="summary-card">
+        <h3>Today's Schedule</h3>
+        <p style="font-size:18px;">{{ today_schedule.schedule_note }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Expected Hours</h3>
+        <p>{{ "%.2f"|format(today_schedule.expected_hours) if today_schedule.expected_hours is not none else "-" }}</p>
+    </div>
+    <div class="summary-card">
+        <h3>Unpaid Breaks</h3>
+        <p>{{ "%.0f"|format(today_entry_summary.unpaid_break_minutes) }} min</p>
+    </div>
+    <div class="summary-card">
+        <h3>Worked Today</h3>
+        <p>{{ "%.2f"|format(today_entry_summary.worked_hours) if today_entry_summary.worked_hours is not none else "0.00" }}</p>
+    </div>
+</div>
+
+<div style="display:grid; grid-template-columns:minmax(320px, 1fr) minmax(320px, 1fr); gap:20px; margin-bottom:20px;">
+    <div class="section-card">
+        <h2 style="margin-top:0; color:#2c3e50;">Today's Entry</h2>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:20px;">
+            {% if not today_entry or not today_entry["clock_in"] %}
+            <form method="POST" style="margin:0;">
+                <input type="hidden" name="action" value="clock_in">
+                <button type="submit" style="background:#16a085; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                    Clock In
+                </button>
+            </form>
+            {% else %}
+                {% if not today_entry_summary.active_segment and not today_entry["clock_out"] and not today_entry["break1_start"] and today_entry_summary.allowed_breaks >= 1 %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="start_break_1">
+                    <button type="submit" style="background:#b45309; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        Start Break 1
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if today_entry["break1_start"] and not today_entry["break1_end"] %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="end_break_1">
+                    <button type="submit" style="background:#b45309; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        End Break 1
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if not today_entry_summary.active_segment and not today_entry["clock_out"] and not today_entry["lunch_start"] %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="start_lunch">
+                    <button type="submit" style="background:#2563eb; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        Start Paid Lunch
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if today_entry["lunch_start"] and not today_entry["lunch_end"] %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="end_lunch">
+                    <button type="submit" style="background:#2563eb; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        End Paid Lunch
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if not today_entry_summary.active_segment and not today_entry["clock_out"] and not today_entry["break2_start"] and today_entry_summary.can_take_second_break %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="start_break_2">
+                    <button type="submit" style="background:#92400e; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        Start Break 2
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if today_entry["break2_start"] and not today_entry["break2_end"] %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="end_break_2">
+                    <button type="submit" style="background:#92400e; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        End Break 2
+                    </button>
+                </form>
+                {% endif %}
+
+                {% if not today_entry_summary.active_segment and not today_entry["clock_out"] %}
+                <form method="POST" style="margin:0;">
+                    <input type="hidden" name="action" value="clock_out">
+                    <button type="submit" style="background:#c0392b; color:white; padding:12px 18px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">
+                        Clock Out
+                    </button>
+                </form>
+                {% endif %}
+            {% endif %}
+        </div>
+
+        <div style="margin-top:16px; color:#4b5563;">
+            <div><strong>Date:</strong> {{ today }}</div>
+            <div><strong>Clock In:</strong> {{ today_entry["clock_in"] if today_entry and today_entry["clock_in"] else "Not clocked in" }}</div>
+            <div><strong>Clock Out:</strong> {{ today_entry["clock_out"] if today_entry and today_entry["clock_out"] else "Not clocked out" }}</div>
+            <div><strong>Gross Hours:</strong> {{ "%.2f"|format(today_entry_summary.gross_hours) if today_entry_summary.gross_hours is not none else "In progress" }}</div>
+            <div><strong>Worked Hours:</strong> {{ "%.2f"|format(today_entry_summary.worked_hours) if today_entry_summary.worked_hours is not none else "In progress" }}</div>
+        </div>
+    </div>
+
+    <div class="section-card">
+        <h2 style="margin-top:0; color:#2c3e50;">Break and Lunch Tracking</h2>
+        <div style="display:grid; gap:12px;">
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px;">
+                <strong>Unpaid Break Allowance:</strong>
+                {% if today_entry_summary.allowed_breaks == 2 %}
+                    Two {{ unpaid_break_minutes }}-minute breaks on full shifts.
+                {% elif today_entry_summary.allowed_breaks == 1 %}
+                    One {{ unpaid_break_minutes }}-minute break on half shifts.
+                {% else %}
+                    No unpaid break allowance for this shift.
+                {% endif %}
+            </div>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px;">
+                <strong>Paid Lunch:</strong> Track up to {{ paid_lunch_minutes }} minutes without reducing worked hours.
+            </div>
+            <div>
+                <div><strong>Break 1:</strong> {{ "%.0f"|format(today_entry_summary.break_1_minutes) }} minutes</div>
+                <div><strong>Break 2:</strong> {{ "%.0f"|format(today_entry_summary.break_2_minutes) }} minutes</div>
+                <div><strong>Total Unpaid Breaks:</strong> {{ "%.0f"|format(today_entry_summary.unpaid_break_minutes) }} minutes</div>
+                <div><strong>Paid Lunch Tracked:</strong> {{ "%.0f"|format(today_entry_summary.paid_lunch_minutes) }} minutes</div>
+            </div>
+            <div>
+                <strong>Status:</strong>
+                {% if today_entry_summary.active_segment == "break_1" %}
+                    Out on unpaid break 1
+                {% elif today_entry_summary.active_segment == "break_2" %}
+                    Out on unpaid break 2
+                {% elif today_entry_summary.active_segment == "lunch" %}
+                    Out on paid lunch
+                {% elif today_entry and today_entry["clock_out"] %}
+                    Shift closed
+                {% elif today_entry and today_entry["clock_in"] %}
+                    On duty
+                {% else %}
+                    Not clocked in
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="section-card">
+    <h2 style="margin-top:0; color:#2c3e50;">Recent Entries</h2>
+    {% if recent_entries %}
+    <table>
+        <tr>
+            <th>Date</th>
+            <th>Team</th>
+            <th>Schedule</th>
+            <th>Clock In</th>
+            <th>Clock Out</th>
+            <th>Unpaid Breaks</th>
+            <th>Paid Lunch</th>
+            <th>Worked Hours</th>
+            <th>Expected Hours</th>
+        </tr>
+        {% for entry in recent_entries %}
+        <tr>
+            <td>{{ entry["clock_date"] }}</td>
+            <td>{{ entry["team"] if entry["team"] else "-" }}</td>
+            <td>{{ entry["schedule_note"] if entry["schedule_note"] else "-" }}</td>
+            <td>{{ entry["clock_in"] if entry["clock_in"] else "-" }}</td>
+            <td>{{ entry["clock_out"] if entry["clock_out"] else "-" }}</td>
+            <td>{{ "%.0f"|format(entry["unpaid_break_minutes"]) }} min</td>
+            <td>{{ "%.0f"|format(entry["paid_lunch_minutes"]) }} min</td>
+            <td>{{ "%.2f"|format(entry["worked_hours"]) if entry["worked_hours"] is not none else "In progress" }}</td>
+            <td>{{ "%.2f"|format(entry["expected_hours"]) if entry["expected_hours"] is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#666;">No time clock entries yet.</p>
+    {% endif %}
+</div>
+
+{% endblock %}

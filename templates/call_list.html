@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Call List{% if site_scope %} - {{ site_scope }}{% endif %}</h2>
+<div class="section-card" style="margin-bottom:16px;">
+    <form method="GET" style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+        <div>
+            <label for="rank" style="display:block; font-weight:600; margin-bottom:6px;">Filter By Rank</label>
+            <select id="rank" name="rank">
+                <option value="">All Ranks</option>
+                {% for rank in rank_options %}
+                <option value="{{ rank }}" {% if selected_rank == rank %}selected{% endif %}>{{ rank }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn">Apply Filter</button>
+        {% if selected_rank %}<a href="{{ url_for('call_list') }}" class="btn btn-secondary">Clear Filter</a>{% endif %}
+    </form>
+</div>
+<div class="section-card">
+    <table>
+        <tr><th>Name</th><th>Rank</th><th>Site</th><th>Team / Shift</th><th>Email</th><th>Phone</th></tr>
+        {% for user in users %}
+        {% set meta = team_meta.get(user.team, {'label': user.team or 'Unassigned', 'color': '#4b5563', 'background': '#e5e7eb', 'shift_label': 'Unassigned'}) %}
+        <tr>
+            <td style="text-align:left;"><strong>{{ user.display_name }}</strong><br><span class="muted">@{{ user.username }}</span></td>
+            <td>{{ user.rank if user.rank else "Officer" }}</td>
+            <td>{{ user.site if user.site else "Unassigned" }}</td>
+            <td><span class="chip" style="background:{{ meta.background }}; color:{{ meta.color }};">{{ meta.label }} <span style="opacity:0.7;">{{ meta.shift_label }}</span></span></td>
+            <td>{{ user.email if user.email else "" }}</td>
+            <td>{{ user.phone if user.phone else "" }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}

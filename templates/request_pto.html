@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <div>
+        <h1 style="margin:0; color:#2c3e50;">PTO Operations Portal</h1>
+        <p style="margin:5px 0 0 0; color:#666;">Submit a PTO Request</p>
+    </div>
+    <div style="text-align:right;">
+        <p style="margin:0; font-weight:bold;">{{ current_user.username }}</p>
+        <p style="margin:5px 0 0 0; color:#666;">
+            {{ current_user.rank if current_user.rank else "Officer" }}
+        </p>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div style="margin-bottom:20px;">
+      {% for message in messages %}
+        <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<div style="max-width:760px; background:white; border:1px solid #ddd; border-radius:10px; padding:25px;">
+    <h2 style="margin-top:0; color:#2c3e50;">PTO Request Form</h2>
+    <p style="color:#666; margin-top:0;">
+        Submit your time-off request for review. Standard officer PTO is limited separately from command-team PTO, and non-PTO days can also be submitted here.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data" id="pto-request-form">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
+            <div>
+                <label for="start_date" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Start Date</label>
+                <input
+                    type="date"
+                    id="start_date"
+                    name="start_date"
+                    required
+                    style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;"
+                >
+            </div>
+
+            <div>
+                <label for="end_date" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">End Date</label>
+                <input
+                    type="date"
+                    id="end_date"
+                    name="end_date"
+                    required
+                    style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;"
+                >
+            </div>
+        </div>
+
+        <div style="margin-bottom:20px;">
+            <label for="request_kind" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Request Type</label>
+            <select
+                id="request_kind"
+                name="request_kind"
+                style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;"
+            >
+                <option value="PTO">PTO</option>
+                <option value="Non-PTO Day">Non-PTO Day</option>
+            </select>
+        </div>
+
+        <div style="margin-bottom:18px; padding:14px; background:#f8f9fa; border:1px solid #e5e7eb; border-radius:8px;">
+            <label style="display:flex; gap:10px; align-items:flex-start; color:#2c3e50; font-weight:bold;">
+                <input type="checkbox" id="special_request_toggle" style="margin-top:3px;">
+                This request is for bereavement or jury duty
+            </label>
+            <p style="margin:8px 0 0 28px; color:#666;">
+                If checked, documentation is required before the request can be submitted.
+            </p>
+        </div>
+
+        <div id="special_request_fields" style="display:none; margin-bottom:20px; padding:16px; border:1px solid #dbeafe; border-radius:8px; background:#f8fbff;">
+            <div style="margin-bottom:16px;">
+                <label for="special_type" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Special Leave Type</label>
+                <select
+                    id="special_type"
+                    name="special_type"
+                    style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box;"
+                >
+                    <option value="">Select special leave type</option>
+                    {% for option in special_pto_types %}
+                    <option value="{{ option }}">{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label for="documentation_file" style="display:block; font-weight:bold; margin-bottom:8px; color:#2c3e50;">Upload Documentation</label>
+                <input
+                    type="file"
+                    id="documentation_file"
+                    name="documentation_file"
+                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                    style="width:100%; padding:12px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; background:white;"
+                >
+                <p style="margin:8px 0 0 0; color:#666;">Accepted image types: PNG, JPG, JPEG, WEBP.</p>
+            </div>
+        </div>
+
+        <div style="margin-bottom:20px; background:#f8f9fa; border-left:4px solid #2c3e50; padding:12px 14px; color:#555;">
+            Please double-check your dates before submitting. Standard officer PTO limits are counted separately from command staff, and special leave requests require supporting documentation.
+        </div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <button
+                type="submit"
+                style="background:#2c3e50; color:white; padding:12px 18px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;"
+            >
+                Submit Request
+            </button>
+
+            <a
+                href="{{ url_for('shift_swap_request') }}"
+                style="background:#f39c12; color:white; padding:12px 18px; text-decoration:none; border-radius:6px; font-weight:bold;"
+            >
+                Request Shift Swap
+            </a>
+
+            <a
+                href="/dashboard"
+                style="background:#e9ecef; color:#2c3e50; padding:12px 18px; text-decoration:none; border-radius:6px; font-weight:bold;"
+            >
+                Back to Dashboard
+            </a>
+        </div>
+    </form>
+</div>
+
+<script>
+const specialToggle = document.getElementById("special_request_toggle");
+const specialFields = document.getElementById("special_request_fields");
+const specialType = document.getElementById("special_type");
+const documentationFile = document.getElementById("documentation_file");
+
+function syncSpecialRequestFields() {
+    const enabled = specialToggle.checked;
+    specialFields.style.display = enabled ? "block" : "none";
+    specialType.required = enabled;
+    documentationFile.required = enabled;
+    if (!enabled) {
+        specialType.value = "";
+        documentationFile.value = "";
+    }
+}
+
+specialToggle.addEventListener("change", syncSpecialRequestFields);
+syncSpecialRequestFields();
+</script>
+
+{% endblock %}
