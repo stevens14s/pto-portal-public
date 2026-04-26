@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div class="section-card">
+      {% for message in messages %}
+      <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">{{ message }}</div>
+      {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<div class="section-card">
+    <h2 style="margin:0; color:#2c3e50;">Send Notice</h2>
+    <p class="muted" style="margin:8px 0 0 0;">
+        Send a site-scoped email for upcoming events like PPSB or BLS classes.
+        {% if site_scope %}You are only selecting from {{ site_scope }} users.{% else %}As admin, you can select from all users.{% endif %}
+    </p>
+</div>
+
+<div class="section-card" style="max-width:960px;">
+    <form method="POST" style="display:grid; gap:16px;">
+        <div>
+            <label for="selected_user_ids" style="display:block; font-weight:600; margin-bottom:6px;">Recipients</label>
+            <select id="selected_user_ids" name="selected_user_ids" multiple size="12" style="min-height:280px;">
+                {% for recipient in recipients_preview %}
+                <option value="{{ recipient.id }}" {% if recipient.id in selected_user_ids %}selected{% endif %}>
+                    {{ recipient.display_name }} - {{ recipient.rank }}{% if recipient.team %} - {{ recipient.team }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+            <div class="muted" style="margin-top:8px;">{{ recipient_count }} available recipients. Hold `Ctrl` to select multiple names.</div>
+        </div>
+
+        <div>
+            <label for="subject" style="display:block; font-weight:600; margin-bottom:6px;">Subject</label>
+            <input id="subject" name="subject" placeholder="PPSB Class Reminder" required>
+        </div>
+
+        <div>
+            <label for="message" style="display:block; font-weight:600; margin-bottom:6px;">Message</label>
+            <textarea id="message" name="message" placeholder="Class begins at 0900 tomorrow. Bring your gear and arrive 15 minutes early." required style="min-height:160px;"></textarea>
+        </div>
+
+        <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+            <input id="send_in_app" type="checkbox" name="send_in_app" value="yes" style="width:auto;">
+            Also send as in-app notification
+        </label>
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button type="submit" class="btn">Send Notice</button>
+            <span class="muted">Only selected users will receive the email.</span>
+        </div>
+    </form>
+</div>
+{% endblock %}

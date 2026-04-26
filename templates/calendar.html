@@ -5,9 +5,21 @@
         <h1 style="margin:0; color:#2c3e50;">PTO Calendar</h1>
         <p style="margin:6px 0 0 0; color:#64748b;">Approved time off{% if site_scope %} for {{ site_scope }}{% else %} across all visible sites{% endif %}.{% if show_calendar_details %} Click a day to see a clean officer list below.{% endif %}</p>
     </div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
         <a href="{{ url_for('calendar', month=prev_month, year=prev_year) }}" class="btn btn-secondary">Previous</a>
-        <div class="chip" style="background:#e2e8f0; color:#1e293b; padding:8px 14px;">{{ month_name }} {{ year }}</div>
+        <form method="GET" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select name="month" aria-label="Select month" style="width:auto;">
+                {% for month_number in range(1, 13) %}
+                <option value="{{ month_number }}" {% if month_number == month %}selected{% endif %}>{{ month_names[month_number] }}</option>
+                {% endfor %}
+            </select>
+            <select name="year" aria-label="Select year" style="width:auto;">
+                {% for year_option in year_options %}
+                <option value="{{ year_option }}" {% if year_option == year %}selected{% endif %}>{{ year_option }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary">Go</button>
+        </form>
         <a href="{{ url_for('calendar', month=next_month, year=next_year) }}" class="btn btn-secondary">Next</a>
     </div>
 </div>
@@ -15,7 +27,7 @@
     <div class="summary-card"><h3>Approved Entries This Month</h3><p>{{ total_approved }}</p></div>
     <div class="summary-card"><h3>Days With Time Off</h3><p>{{ visible_days }}</p></div>
     <div class="summary-card"><h3>View Scope</h3><p style="font-size:18px;">{{ site_scope if site_scope else "All Sites" }}</p></div>
-    <div class="summary-card"><h3>Legend</h3><div style="display:flex; gap:8px; flex-wrap:wrap;"><span class="chip" style="background:#dcfce7; color:#166534;">1 Off</span><span class="chip" style="background:#fef3c7; color:#92400e;">2 Off</span><span class="chip" style="background:#fecaca; color:#991b1b;">3+ Off</span></div></div>
+    <div class="summary-card"><h3>Legend</h3><div style="display:flex; gap:8px; flex-wrap:wrap;"><span class="chip" style="background:#fef3c7; color:#92400e;">1 Off</span><span class="chip" style="background:#fecaca; color:#991b1b;">2 Off</span></div></div>
 </div>
 <div class="section-card" style="overflow-x:auto;">
     <table style="table-layout:fixed;">
@@ -28,17 +40,17 @@
                 {% else %}
                     {% set date_str = year ~ "-" ~ "%02d"|format(month) ~ "-" ~ "%02d"|format(day) %}
                     {% set count = calendar_days.get(date_str, 0) %}
-                    <td style="min-height:120px; text-align:left; {% if count >= 3 %}background:#fee2e2;{% elif count == 2 %}background:#fef3c7;{% elif count == 1 %}background:#dcfce7;{% else %}background:white;{% endif %}">
+                    <td style="min-height:120px; text-align:left; {% if count >= 2 %}background:#fee2e2;{% elif count == 1 %}background:#fef3c7;{% else %}background:white;{% endif %}">
                         <div style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px;">
                             <strong style="font-size:16px;">{{ day }}</strong>
-                            <span class="chip" style="background:rgba(255,255,255,0.75); color:#334155;">{{ count }} off</span>
+                            <span class="chip" style="background:rgba(255,255,255,0.75); color:#334155;">{{ count }} team off</span>
                         </div>
                         {% if count == 0 %}
-                            <span style="font-size:12px; color:#94a3b8;">No approved PTO</span>
+                            <span style="font-size:12px; color:#94a3b8;">No approved team PTO</span>
                         {% elif show_calendar_details %}
                             <button type="button" class="btn btn-secondary" style="width:100%;" onclick="showDayDetails('{{ date_str }}')">View Details</button>
                         {% else %}
-                            <span style="font-size:12px; color:#475569;">Approved count only</span>
+                            <span style="font-size:12px; color:#475569;">Team count only</span>
                         {% endif %}
                     </td>
                 {% endif %}
@@ -74,7 +86,7 @@ function showDayDetails(dateStr) {
         card.style.border = '1px solid #dbe4ef';
         card.style.borderRadius = '10px';
         card.style.background = '#f8fbff';
-        card.innerHTML = `<strong>${item.display_name}</strong><div class="muted" style="margin-top:4px;">${item.rank} · ${item.request_kind}</div>`;
+        card.innerHTML = `<strong>${item.display_name}</strong><div class="muted" style="margin-top:4px;">${item.rank} | ${item.team} | ${item.request_kind}</div>`;
         container.appendChild(card);
     });
 }

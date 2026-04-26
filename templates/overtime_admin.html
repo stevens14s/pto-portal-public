@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block content %}
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div class="section-card">
+      {% for message in messages %}
+      <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">{{ message }}</div>
+      {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+<div class="section-card">
+    <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+            <h2 style="margin:0; color:#2c3e50;">Overtime Admin</h2>
+            <p class="muted" style="margin:6px 0 0 0;">Review overtime requests, keep the board current, and fill critical slots first.</p>
+        </div>
+    </div>
+</div>
+
+<div style="display:grid; grid-template-columns:repeat(4, minmax(180px, 1fr)); gap:16px; margin-bottom:20px;">
+    <div class="summary-card">
+        <div class="summary-label">Open OT</div>
+        <div class="summary-value">{{ overtime_summary.open }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Taken OT</div>
+        <div class="summary-value">{{ overtime_summary.taken }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Pending Requests</div>
+        <div class="summary-value">{{ overtime_summary.pending_applications }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Critical Still Open</div>
+        <div class="summary-value">{{ overtime_summary.critical_open }}</div>
+    </div>
+</div>
+
+<div style="display:grid; grid-template-columns:minmax(320px, 0.9fr) minmax(320px, 1.1fr); gap:20px; margin-bottom:20px;">
+    <div class="section-card">
+        <h3 style="margin-top:0;">Upload Schedule</h3>
+        <form method="POST" enctype="multipart/form-data" class="form-grid">
+            <input type="hidden" name="action" value="upload_schedule">
+            <div>
+                <label for="period_label" style="display:block; font-weight:600; margin-bottom:6px;">Pay Period Label</label>
+                <input id="period_label" name="period_label" placeholder="04.19 - 05.02" required>
+            </div>
+            <div>
+                <label for="site" style="display:block; font-weight:600; margin-bottom:6px;">Site</label>
+                <select id="site" name="site" required>
+                    {% for site in site_options %}
+                    {% if not site_scope or site == site_scope %}
+                    <option value="{{ site }}">{{ site }}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="shift" style="display:block; font-weight:600; margin-bottom:6px;">Shift</label>
+                <select id="shift" name="shift" required>
+                    <option value="day">Day</option>
+                    <option value="night">Night</option>
+                </select>
+            </div>
+            <div>
+                <label for="schedule_file" style="display:block; font-weight:600; margin-bottom:6px;">Schedule XLSX</label>
+                <input id="schedule_file" type="file" name="schedule_file" accept=".xlsx" required>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; padding-top:28px;">
+                <input id="replace_existing" type="checkbox" name="replace_existing" value="yes" style="width:auto;">
+                <label for="replace_existing" style="font-weight:600; margin:0;">Replace Current Schedule</label>
+            </div>
+            {% if can_manage_ot %}
+            <button type="submit" class="btn">Upload Schedule</button>
+            {% else %}
+            <div class="muted" style="padding-top:30px;">Training Lieutenant and above can manage OT schedules.</div>
+            {% endif %}
+        </form>
+        <p class="muted" style="margin:12px 0 0 0;">Duplicate file names for the same period/site/shift are blocked unless you explicitly replace the current schedule.</p>
+    </div>
+
+    <div class="section-card">
+        <h3 style="margin-top:0;">Auto Assign</h3>
+        <form method="POST" class="form-grid">
+            <input type="hidden" name="action" value="auto_assign">
+            <div>
+                <label for="period_pick" style="display:block; font-weight:600; margin-bottom:6px;">Period</label>
+                <select id="period_pick" name="period_label" required>
+                    {% for period in periods %}
+                    <option value="{{ period[0] }}">{{ period[0] }} - {{ period[1] }} - {{ period[2].title() }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="site_pick" style="display:block; font-weight:600; margin-bottom:6px;">Site</label>
+                <select id="site_pick" name="site" required>
+                    {% for site in site_options %}
+                    {% if not site_scope or site == site_scope %}
+                    <option value="{{ site }}">{{ site }}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="shift_pick" style="display:block; font-weight:600; margin-bottom:6px;">Shift</label>
+                <select id="shift_pick" name="shift" required>
+                    <option value="day">Day</option>
+                    <option value="night">Night</option>
+                </select>
+            </div>
+            {% if can_manage_ot %}
+            <button type="submit" class="btn">Run Auto Assign</button>
+            {% else %}
+            <div class="muted" style="padding-top:30px;">Training Lieutenant and above can run OT assignments.</div>
+            {% endif %}
+        </form>
+        <p class="muted" style="margin:14px 0 0 0;">Assignments favor matching building first, then lowest current pay-period hours, while honoring the 20 OT hours weekly cap.</p>
+    </div>
+</div>
+
+<div class="section-card">
+    <h3 style="margin-top:0;">Recent Schedule Uploads</h3>
+    {% if uploads %}
+    <table style="margin-bottom:20px;">
+        <tr><th>Period</th><th>Site</th><th>Shift</th><th>File</th><th>Uploaded By</th><th>Uploaded At</th><th>Action</th></tr>
+        {% for upload in uploads %}
+        <tr>
+            <td>{{ upload["period_label"] }}</td>
+            <td>{{ upload["site"] }}</td>
+            <td>{{ upload["shift"].title() }}</td>
+            <td>{{ upload["original_filename"] }}</td>
+            <td>{{ upload["username"] if upload["username"] else "-" }}</td>
+            <td>{{ upload["uploaded_at"] }}</td>
+            <td>
+                {% if can_manage_ot %}
+                <form method="POST" onsubmit="return confirm('Remove this uploaded schedule and all OT openings/applications tied to it?');">
+                    <input type="hidden" name="action" value="remove_schedule">
+                    <input type="hidden" name="period_label" value="{{ upload['period_label'] }}">
+                    <input type="hidden" name="site" value="{{ upload['site'] }}">
+                    <input type="hidden" name="shift" value="{{ upload['shift'] }}">
+                    <button type="submit" class="btn btn-secondary">Remove</button>
+                </form>
+                {% else %}
+                <span class="muted">View only</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">No overtime schedules uploaded yet.</p>
+    {% endif %}
+
+    <h3>Current Overtime Board</h3>
+    {% if openings %}
+    <table>
+        <tr><th>Date</th><th>Site</th><th>Shift</th><th>Location</th><th>Priority</th><th>Status</th><th>Applicants</th><th>Assigned To</th></tr>
+        {% for opening in openings %}
+        <tr>
+            <td>{{ opening["opening_date"] }}</td>
+            <td>{{ opening["site"] }}</td>
+            <td>{{ opening["team_label"] }}</td>
+            <td style="text-align:left;">{{ opening["location"] }}<br><span class="muted">{{ opening["shift_start"] }} - {{ opening["shift_end"] }}</span></td>
+            <td>
+                <span class="chip" style="background:{% if opening['priority'] == 'critical' %}#fee2e2{% else %}#fef3c7{% endif %}; color:{% if opening['priority'] == 'critical' %}#991b1b{% else %}#92400e{% endif %};">
+                    {{ opening["priority"].title() }}
+                </span>
+            </td>
+            <td>
+                {% if opening["status"] == "Assigned" %}
+                <span class="chip" style="background:#dcfce7; color:#166534;">Taken</span>
+                {% else %}
+                <span class="chip" style="background:#fef3c7; color:#92400e;">Open</span>
+                {% endif %}
+            </td>
+            <td style="text-align:left;">
+                <strong>{{ opening["applicant_count"] }}</strong>
+                {% set applicants = applicant_details.get(opening["id"], []) %}
+                {% if applicants %}
+                <div style="margin-top:8px; display:grid; gap:8px;">
+                    {% for applicant in applicants %}
+                    <div style="border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f8fafc;">
+                        <div><strong>{{ applicant.display_name }}</strong> <span class="muted">({{ applicant.status }})</span></div>
+                        <div class="muted" style="margin-top:4px;">Building: {{ applicant.building }}</div>
+                        <div class="muted">Current Hours: {{ "%.2f"|format(applicant.current_hours) }}</div>
+                        {% if applicant.note %}<div class="muted">Note: {{ applicant.note }}</div>{% endif %}
+                        <div class="muted" style="font-size:12px;">{{ applicant.submitted_at }}</div>
+                        {% if can_manage_ot and opening["status"] == "Open" and applicant.status == "Applied" %}
+                        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                            <form method="POST" style="margin:0;">
+                                <input type="hidden" name="action" value="approve_application">
+                                <input type="hidden" name="application_id" value="{{ applicant.application_id }}">
+                                <button type="submit" class="btn">Approve</button>
+                            </form>
+                            <form method="POST" style="margin:0;">
+                                <input type="hidden" name="action" value="deny_application">
+                                <input type="hidden" name="application_id" value="{{ applicant.application_id }}">
+                                <button type="submit" class="btn btn-secondary">Deny</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                        {% if can_manage_ot and opening["status"] == "Assigned" and applicant.status == "Assigned" %}
+                        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                            <form method="POST" style="margin:0;">
+                                <input type="hidden" name="action" value="revoke_assignment">
+                                <input type="hidden" name="opening_id" value="{{ opening['id'] }}">
+                                <button type="submit" class="btn btn-secondary">Revoke OT</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="muted" style="margin-top:8px;">No applicants yet.</div>
+                {% endif %}
+            </td>
+            <td>{% if opening["assigned_user_id"] %}{{ ((opening["assigned_first_name"] ~ " " ~ opening["assigned_last_name"]).strip()) if (opening["assigned_first_name"] or opening["assigned_last_name"]) else opening["assigned_username"] }}{% else %}<span class="muted">Still open</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">No overtime openings have been loaded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

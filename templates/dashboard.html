@@ -2,7 +2,7 @@
 {% block content %}
 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap;">
     <div>
-        <h1 style="margin:0; color:#2c3e50;">PTO Operations Portal</h1>
+        <h1 style="margin:0; color:#2c3e50;">Operations Management Portal</h1>
         <p style="margin:6px 0 0 0; color:#666;">PTO Management Dashboard</p>
     </div>
     <div style="text-align:right;">
@@ -24,6 +24,8 @@
 <div class="summary-grid" style="margin-bottom:20px;">
     <div class="summary-card"><h3>PTO Pending</h3><p>{{ pto_pending }}</p></div>
     <div class="summary-card"><h3>Swap Pending</h3><p>{{ swap_pending }}</p></div>
+    <div class="summary-card"><h3>OT Openings</h3><p>{{ overtime_open_count }}</p></div>
+    <div class="summary-card"><h3>My OT Apps</h3><p>{{ my_overtime_app_count }}</p></div>
     <div class="summary-card"><h3>Site</h3><p style="font-size:18px;">{{ current_site if current_site else "Unassigned" }}</p></div>
     <div class="summary-card"><h3>Unread Alerts</h3><p>{{ unread_notifications }}</p></div>
 </div>
@@ -60,6 +62,7 @@
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
             <a href="/request" style="background:#3498db; color:white; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:bold;">Submit PTO</a>
             <a href="{{ url_for('shift_swap_request') }}" style="background:#f39c12; color:white; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:bold;">Submit Shift Swap</a>
+            <a href="{{ url_for('overtime') }}" style="background:#7c3aed; color:white; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:bold;">View Overtime</a>
             <a href="{{ url_for('calendar') }}" style="background:#2c3e50; color:white; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:bold;">View Calendar</a>
             <a href="{{ url_for('account_settings') }}" style="background:#16a34a; color:white; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:bold;">Account Settings</a>
         </div>

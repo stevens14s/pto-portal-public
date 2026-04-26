@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PTO Operations Portal</title>
+    <title>Operations Management Portal</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background-color: #f4f6f9; color: #243447; }
         .navbar { background: #1f2d3d; padding: 15px 20px; color: white; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
@@ -40,19 +40,22 @@
 </head>
 <body>
 <div class="navbar">
-    <span style="font-weight:bold; margin-right:20px;">PTO Operations Portal</span>
+    <span style="font-weight:bold; margin-right:20px;">Operations Portal</span>
     <a href="/dashboard">Dashboard</a>
     <a href="/request">Request PTO</a>
     <a href="{{ url_for('shift_swap_request') }}">Shift Swap</a>
+    <a href="{{ url_for('overtime') }}">Overtime</a>
     <a href="{{ url_for('calendar') }}">Calendar</a>
     <a href="{{ url_for('account_settings') }}">My Account</a>
     {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Captain", "Director"]) %}
     <a href="/admin">PTO Review</a>
     <a href="{{ url_for('shift_swap_admin') }}">Swap Review</a>
+    <a href="{{ url_for('command_notice') }}">Send Notice</a>
     {% endif %}
     {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Lieutenant", "Training Lieutenant", "Captain", "Director"]) %}
     <a href="{{ url_for('audit_history') }}">Audit History</a>
     <a href="/call_list">Call List</a>
+    <a href="{{ url_for('overtime_admin') }}">OT Admin</a>
     {% endif %}
     {% if current_user.is_authenticated and (current_user.role == "admin" or current_user.rank in ["Training Lieutenant", "Captain", "Director"]) %}
     <a href="/manage_users">Manage Users</a>

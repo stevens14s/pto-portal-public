@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div class="section-card">
+      {% for message in messages %}
+      <div style="background:#fff3cd; color:#856404; padding:12px; border:1px solid #ffeeba; border-radius:6px; margin-bottom:10px;">{{ message }}</div>
+      {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+<div class="section-card">
+    <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+            <h2 style="margin:0; color:#2c3e50;">Overtime Openings</h2>
+            <p class="muted" style="margin:6px 0 0 0;">Apply for open overtime slots in your site{% if allowed_teams %} for {{ allowed_teams|join('/') }} team coverage{% endif %}.</p>
+        </div>
+    </div>
+</div>
+
+<div style="display:grid; grid-template-columns:minmax(360px, 1.2fr) minmax(320px, 0.8fr); gap:20px;">
+    <div class="section-card">
+        {% if openings %}
+        <table>
+            <tr>
+                <th>Date</th><th>Shift</th><th>Location</th><th>Priority</th><th>Status</th><th>Applicants</th><th>Action</th>
+            </tr>
+            {% for opening in openings %}
+            <tr>
+                <td>{{ opening["opening_date"] }}<br><span class="muted">{{ opening["day_name"] }}</span></td>
+                <td>{{ opening["team_label"] }}</td>
+                <td style="text-align:left;">{{ opening["location"] }}<br><span class="muted">{{ opening["shift_start"] }} - {{ opening["shift_end"] }}</span></td>
+                <td>
+                    <span class="chip" style="background:{% if opening['priority'] == 'critical' %}#fee2e2{% else %}#fef3c7{% endif %}; color:{% if opening['priority'] == 'critical' %}#991b1b{% else %}#92400e{% endif %};">
+                        {{ opening["priority"].title() }}
+                    </span>
+                </td>
+                <td>
+                    {% if opening["status"] == "Assigned" %}
+                        Taken<br>
+                        <span class="muted">{{ ((opening["assigned_first_name"] ~ " " ~ opening["assigned_last_name"]).strip()) if (opening["assigned_first_name"] or opening["assigned_last_name"]) else opening["assigned_username"] }}</span>
+                    {% else %}
+                        Open
+                    {% endif %}
+                </td>
+                <td>{{ opening["applicant_count"] }}</td>
+                <td>
+                    {% if opening["status"] == "Open" %}
+                        {% if opening["id"] in applied_ids %}
+                        <form method="POST" style="display:grid; gap:8px;">
+                            <input type="hidden" name="action" value="withdraw">
+                            <input type="hidden" name="opening_id" value="{{ opening['id'] }}">
+                            <button type="submit" class="btn btn-secondary">Withdraw</button>
+                        </form>
+                        {% else %}
+                        <form method="POST" style="display:grid; gap:8px;">
+                            <input type="hidden" name="action" value="apply">
+                            <input type="hidden" name="opening_id" value="{{ opening['id'] }}">
+                            <textarea name="note" placeholder="Optional note for command staff"></textarea>
+                            <button type="submit" class="btn">Apply</button>
+                        </form>
+                        {% endif %}
+                    {% else %}
+                        <span class="muted">Closed</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="muted" style="margin:0;">No overtime openings are currently loaded for your site/team view.</p>
+        {% endif %}
+    </div>
+
+    <div class="section-card">
+        <h3 style="margin-top:0; color:#2c3e50;">My Recent OT Applications</h3>
+        {% if my_applications %}
+            {% for app in my_applications %}
+            <div class="notification-item">
+                <strong>{{ app["location"] }}</strong>
+                <div class="muted" style="margin-top:4px;">{{ app["opening_date"] }} - {{ app["team_label"] }} - {{ app["priority"].title() }}</div>
+                <div style="margin-top:6px;">Status: <strong>{{ app["status"] }}</strong></div>
+                {% if app["note"] %}<div class="muted" style="margin-top:6px;">Note: {{ app["note"] }}</div>{% endif %}
+                <div class="muted" style="margin-top:6px; font-size:12px;">{{ app["submitted_at"] }}</div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="muted" style="margin:0;">You have not applied for overtime yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

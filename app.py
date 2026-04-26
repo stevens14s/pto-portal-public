@@ -13,6 +13,7 @@ import smtplib
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads" / "pto_documents"
+OVERTIME_UPLOAD_DIR = BASE_DIR / "uploads" / "overtime_schedules"
 DEFAULT_SECRET_KEY = "change-me-before-production"
 
 app = Flask(__name__)
@@ -27,7 +28,21 @@ MAX_OFFICERS_OFF = 2
 ROTATION_START_DATE = "2026-04-19"
 ANCHOR_ACTIVE_TEAMS = {"Black", "Blue"}
 TEAM_OPTIONS = ("Red", "Black", "Gold", "Blue", "Command Staff")
-SITE_OPTIONS = ("Morrisville/Durham", "Greensboro")
+SITE_OPTIONS = ("Site Alpha", "Site Beta")
+BUILDING_OPTIONS = (
+    "Operations Center",
+    "Primary Gatehouse",
+    "North Campus Lobby",
+    "South Campus Lobby",
+    "Logistics Hub",
+    "Research Annex",
+    "Security Control Center",
+    "Client Site A",
+    "Client Site B",
+    "Client Site C",
+    "Command Staff",
+)
+RANK_OPTIONS = ("Officer", "Sergeant", "Lieutenant", "Training Lieutenant", "Captain", "Director")
 SUPERVISOR_RANKS = ("Lieutenant", "Training Lieutenant", "Captain", "Director")
 COMMAND_REVIEW_RANKS = ("Captain", "Director")
 LATE_PUNCH_THRESHOLD_MINUTES = 15
@@ -36,6 +51,9 @@ PAID_LUNCH_MINUTES = 45
 COMMAND_TEAM_RANKS = ("Training Lieutenant", "Captain", "Director")
 SPECIAL_PTO_TYPES = ("Bereavement", "Jury Duty")
 ALLOWED_DOCUMENT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_SCHEDULE_EXTENSIONS = {".xlsx"}
+MAX_OT_HOURS_PER_WEEK = 20.0
+MAX_OT_HOURS_PER_PAY_PERIOD = 40.0
 
 # ---------------- DATABASE ----------------
 def init_db():
@@ -52,6 +70,7 @@ def init_db():
         phone TEXT,
         team TEXT DEFAULT '',
         site TEXT DEFAULT '',
+        building TEXT DEFAULT '',
         first_name TEXT DEFAULT '',
         last_name TEXT DEFAULT ''
     )''')
@@ -62,10 +81,74 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN team TEXT DEFAULT ''")
     if "site" not in user_columns:
         c.execute("ALTER TABLE users ADD COLUMN site TEXT DEFAULT ''")
+    if "building" not in user_columns:
+        c.execute("ALTER TABLE users ADD COLUMN building TEXT DEFAULT ''")
     if "first_name" not in user_columns:
         c.execute("ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''")
     if "last_name" not in user_columns:
         c.execute("ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''")
+
+    c.execute('''CREATE TABLE IF NOT EXISTS overtime_schedule_uploads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_label TEXT,
+        site TEXT,
+        shift TEXT,
+        original_filename TEXT,
+        file_path TEXT,
+        uploaded_by INTEGER,
+        uploaded_at TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS overtime_openings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_label TEXT,
+        site TEXT,
+        shift TEXT,
+        location TEXT,
+        opening_date TEXT,
+        day_name TEXT,
+        slot_label TEXT,
+        priority TEXT,
+        shift_start TEXT,
+        shift_end TEXT,
+        source_upload_id INTEGER,
+        status TEXT DEFAULT 'Open',
+        assigned_user_id INTEGER,
+        assigned_at TEXT,
+        assigned_by TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS overtime_baseline_hours (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_label TEXT,
+        site TEXT,
+        shift TEXT,
+        roster_name TEXT,
+        week_1_hours REAL DEFAULT 0,
+        week_2_hours REAL DEFAULT 0,
+        pay_period_hours REAL DEFAULT 0,
+        uploaded_at TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS overtime_baseline_shifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_label TEXT,
+        site TEXT,
+        shift TEXT,
+        roster_name TEXT,
+        work_date TEXT,
+        location TEXT,
+        uploaded_at TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS overtime_applications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opening_id INTEGER,
+        user_id INTEGER,
+        note TEXT DEFAULT '',
+        status TEXT DEFAULT 'Applied',
+        submitted_at TEXT
+    )''')
 
 
     c.execute('''CREATE TABLE IF NOT EXISTS pto_requests (
@@ -78,7 +161,8 @@ def init_db():
         created_at TEXT,
         request_kind TEXT DEFAULT 'PTO',
         special_type TEXT DEFAULT '',
-        documentation_path TEXT DEFAULT ''
+        documentation_path TEXT DEFAULT '',
+        override_approved INTEGER DEFAULT 0
     )''')
 
     c.execute("PRAGMA table_info(pto_requests)")
@@ -91,6 +175,8 @@ def init_db():
         c.execute("ALTER TABLE pto_requests ADD COLUMN special_type TEXT DEFAULT ''")
     if "documentation_path" not in pto_columns:
         c.execute("ALTER TABLE pto_requests ADD COLUMN documentation_path TEXT DEFAULT ''")
+    if "override_approved" not in pto_columns:
+        c.execute("ALTER TABLE pto_requests ADD COLUMN override_approved INTEGER DEFAULT 0")
 
     c.execute('''CREATE TABLE IF NOT EXISTS shift_swaps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +343,94 @@ def get_team_schedule(team, clock_date_str):
     }
 
 
+def get_rotation_week_for_date(clock_date_str):
+    anchor_date = datetime.strptime(ROTATION_START_DATE, "%Y-%m-%d").date()
+    clock_date = datetime.strptime(clock_date_str, "%Y-%m-%d").date()
+    return ((clock_date - anchor_date).days // 7) % 2 + 1
+
+
+def get_rotation_shift_teams(clock_date_str, shift):
+    rotation_week = get_rotation_week_for_date(clock_date_str)
+    active_teams = ANCHOR_ACTIVE_TEAMS if rotation_week == 1 else {"Red", "Gold"}
+    if shift == "day":
+        active_team = "Black" if "Black" in active_teams else "Red"
+        inactive_team = "Red" if active_team == "Black" else "Black"
+    else:
+        active_team = "Blue" if "Blue" in active_teams else "Gold"
+        inactive_team = "Gold" if active_team == "Blue" else "Blue"
+    return active_team, inactive_team
+
+
+def get_opposite_ot_teams_for_user(team):
+    if team in {"Black", "Blue"}:
+        return ("Red", "Gold")
+    if team in {"Red", "Gold"}:
+        return ("Black", "Blue")
+    return ()
+
+
+def get_scheduled_team_for_opening(opening_date_str, shift, slot_label=""):
+    if shift not in {"day", "night"}:
+        return ""
+    weekday = datetime.strptime(opening_date_str, "%Y-%m-%d").weekday()
+    active_team, inactive_team = get_rotation_shift_teams(opening_date_str, shift)
+
+    slot_label_text = str(slot_label or "").lower()
+    is_split = "split" in slot_label_text
+
+    if weekday == 1:
+        return active_team if is_split else inactive_team
+
+    if weekday in {6, 0, 4, 5}:
+        return active_team
+    return inactive_team
+
+
+def enrich_overtime_opening_row(row):
+    if isinstance(row, dict):
+        opening = dict(row)
+    elif hasattr(row, "keys"):
+        opening = {key: row[key] for key in row.keys()}
+    else:
+        opening = {
+            "id": row[0],
+            "period_label": row[1],
+            "site": row[2],
+            "shift": row[3],
+            "location": row[4],
+            "opening_date": row[5],
+            "day_name": row[6],
+            "slot_label": row[7],
+            "priority": row[8],
+            "shift_start": row[9],
+            "shift_end": row[10],
+            "source_upload_id": row[11],
+            "status": row[12],
+            "assigned_user_id": row[13],
+            "assigned_at": row[14],
+            "assigned_by": row[15],
+        }
+    team = get_scheduled_team_for_opening(
+        opening["opening_date"],
+        opening["shift"],
+        opening.get("slot_label", ""),
+    )
+    team_meta = get_team_metadata(team)
+    opening["team"] = team
+    opening["team_meta"] = team_meta
+    opening["team_label"] = f"{team_meta['label']} {team_meta['shift_label']}" if team else opening["shift"].title()
+    return opening
+
+
+def filter_openings_for_user(openings, user):
+    if user_is_command_team(user):
+        return openings
+    allowed_teams = get_opposite_ot_teams_for_user(getattr(user, "team", "") or "")
+    if not allowed_teams:
+        return openings
+    return [opening for opening in openings if opening.get("team") in allowed_teams]
+
+
 def calculate_duration_minutes(start_str, end_str, fallback_end_str=None):
     if not start_str:
         return 0
@@ -318,6 +492,764 @@ def normalize_phone_number(value):
 def get_display_name_from_values(first_name, last_name, username):
     full_name = " ".join(part.strip() for part in [first_name or "", last_name or ""] if part and part.strip())
     return full_name or (username or "")
+
+
+def get_roster_name_from_values(first_name, last_name, username):
+    first = (first_name or "").strip()
+    last = (last_name or "").strip()
+    if first and last:
+        first_token = first.split()[0]
+        roster_prefix = first_token if len(first_token) <= 2 else first_token[0]
+        return f"{roster_prefix}.{last}".replace(" ", "")
+    return (username or "").strip()
+
+
+def is_allowed_schedule_file(filename):
+    suffix = Path(filename or "").suffix.lower()
+    return suffix in ALLOWED_SCHEDULE_EXTENSIONS
+
+
+def save_overtime_schedule(file_storage, period_label, site, shift):
+    filename = secure_filename(file_storage.filename or "")
+    if not filename:
+        raise ValueError("Schedule file is missing a filename.")
+    if not is_allowed_schedule_file(filename):
+        raise ValueError("Schedule must be an XLSX file.")
+
+    OVERTIME_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe_period = secure_filename(period_label or "current-period")
+    safe_site = secure_filename(site or "site")
+    saved_name = f"{safe_period}_{safe_site}_{shift}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
+    destination = OVERTIME_UPLOAD_DIR / saved_name
+    file_storage.save(destination)
+    return str(destination)
+
+
+def clean_schedule_name(value):
+    return " ".join(str(value).replace("\n", " ").split())
+
+
+def is_schedule_placeholder(value):
+    text = clean_schedule_name(value).upper()
+    if text in {"CRITICAL", "FLEX", "CLOSED", "OFF", "PTO", "OPEN AVAIL.", "OPEN AVAIL"}:
+        return True
+    return "FLEX" in text or "CRITICAL" in text or "OPEN AVAIL" in text
+
+
+def is_schedule_opening(value):
+    text = clean_schedule_name(value).upper()
+    return "CRITICAL" in text or "FLEX" in text or "OPEN AVAIL" in text
+
+
+def parse_schedule_time_value(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def calculate_schedule_hours(start_value, end_value):
+    start = parse_schedule_time_value(start_value)
+    end = parse_schedule_time_value(end_value)
+    if not start or not end:
+        return 0.0
+    if end <= start:
+        end += timedelta(days=1)
+    raw_hours = round((end - start).total_seconds() / 3600, 2)
+    if raw_hours <= 6.5:
+        return 5.8
+    return 11.4
+
+
+def build_schedule_columns(ws, start_col):
+    columns = []
+    prior_date = None
+    repeat_count = 0
+
+    for col in range(start_col, start_col + 8):
+        raw_date = ws.cell(2, col).value
+        raw_day = ws.cell(3, col).value
+
+        if raw_date:
+            prior_date = raw_date
+            repeat_count = 1
+            date_text = raw_date.date().isoformat() if isinstance(raw_date, datetime) else str(raw_date)
+            day_text = str(raw_day).strip() if raw_day else ""
+            label = day_text
+        else:
+            if prior_date is None:
+                continue
+            repeat_count += 1
+            date_text = prior_date.date().isoformat() if isinstance(prior_date, datetime) else str(prior_date)
+            prior_day = columns[-1]["day_name"]
+            day_text = str(raw_day).strip() if raw_day else f"{prior_day} Split"
+            label = f"{prior_day} split {repeat_count}"
+
+        columns.append(
+            {
+                "column": col,
+                "date": date_text,
+                "day_name": day_text or columns[-1]["day_name"],
+                "label": label,
+            }
+        )
+    return columns
+
+
+def get_slot_schedule_values(shift, opening_date_str, slot_label, start_value, end_value):
+    slot_label_text = (slot_label or "").lower()
+    weekday = datetime.strptime(opening_date_str, "%Y-%m-%d").weekday()
+    is_split = "split" in slot_label_text
+
+    if weekday == 1:
+        if shift == "day":
+            if is_split:
+                return "12:00:00", "18:00:00", 5.8
+            return "06:00:00", "12:00:00", 5.8
+        if shift == "night":
+            if is_split:
+                return "00:00:00", "06:00:00", 5.8
+            return "18:00:00", "00:00:00", 5.8
+
+    start_time = str(start_value) if start_value is not None else ""
+    end_time = str(end_value) if end_value is not None else ""
+    return start_time, end_time, calculate_schedule_hours(start_value, end_value)
+
+
+def find_schedule_sections(ws, start_col):
+    sections = []
+    for row in range(1, ws.max_row + 1):
+        marker = ws.cell(row, start_col - 2).value
+        location = ws.cell(row, start_col).value
+        if str(marker).strip() == "In" and location:
+            sections.append((row, clean_schedule_name(location)))
+    return sections
+
+
+def parse_overtime_schedule_workbook(path, site, shift, period_label):
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, data_only=True)
+    ws = wb.active
+    week_specs = [(3, "week_1"), (13, "week_2")]
+
+    openings = []
+    baseline_hours = {}
+    baseline_shifts = []
+
+    for start_col, week_name in week_specs:
+        columns = build_schedule_columns(ws, start_col)
+        if not columns:
+            continue
+        sections = find_schedule_sections(ws, start_col)
+        for idx, (_, location) in enumerate(sections):
+            current_start_time = None
+            current_end_time = None
+            start_row = sections[idx][0] + 1
+            end_row = sections[idx + 1][0] - 1 if idx + 1 < len(sections) else ws.max_row
+
+            for row in range(start_row, end_row + 1):
+                start_time = ws.cell(row, start_col - 2).value
+                end_time = ws.cell(row, start_col - 1).value
+                if start_time not in (None, ""):
+                    current_start_time = start_time
+                if end_time not in (None, ""):
+                    current_end_time = end_time
+                start_time = current_start_time
+                end_time = current_end_time
+
+                if not any(ws.cell(row, col["column"]).value for col in columns):
+                    continue
+
+                for col in columns:
+                    value = ws.cell(row, col["column"]).value
+                    if value is None or str(value).strip() == "":
+                        continue
+                    text = clean_schedule_name(value)
+                    slot_start, slot_end, slot_hours = get_slot_schedule_values(
+                        shift,
+                        col["date"],
+                        col["label"],
+                        start_time,
+                        end_time,
+                    )
+                    if is_schedule_placeholder(text):
+                        if location == "Command Staff" or not is_schedule_opening(text):
+                            continue
+                        openings.append(
+                            {
+                                "period_label": period_label,
+                                "site": site,
+                                "shift": shift,
+                                "location": location,
+                                "opening_date": col["date"],
+                                "day_name": col["day_name"],
+                                "slot_label": col["label"],
+                                "priority": "critical" if "CRITICAL" in text.upper() else "flex",
+                                "shift_start": slot_start,
+                                "shift_end": slot_end,
+                            }
+                        )
+                        continue
+
+                    if location == "Command Staff" or text.upper() in {"OFF", "PTO", "CLOSED"}:
+                        continue
+
+                    baseline_hours.setdefault(
+                        text,
+                        {"period_label": period_label, "site": site, "shift": shift, "roster_name": text, "week_1_hours": 0.0, "week_2_hours": 0.0, "pay_period_hours": 0.0},
+                    )
+                    baseline_hours[text][f"{week_name}_hours"] += slot_hours
+                    baseline_hours[text]["pay_period_hours"] += slot_hours
+                    baseline_shifts.append(
+                        {
+                            "period_label": period_label,
+                            "site": site,
+                            "shift": shift,
+                            "roster_name": text,
+                            "work_date": col["date"],
+                            "location": location,
+                        }
+                    )
+
+    return {
+        "openings": openings,
+        "baseline_hours": list(baseline_hours.values()),
+        "baseline_shifts": baseline_shifts,
+    }
+
+
+def replace_overtime_period_data(cursor, period_label, site, shift, upload_id, parsed_data):
+    cursor.execute(
+        "DELETE FROM overtime_applications WHERE opening_id IN (SELECT id FROM overtime_openings WHERE period_label = ? AND site = ? AND shift = ?)",
+        (period_label, site, shift),
+    )
+    cursor.execute("DELETE FROM overtime_openings WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+    cursor.execute("DELETE FROM overtime_baseline_hours WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+    cursor.execute("DELETE FROM overtime_baseline_shifts WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+
+    for opening in parsed_data["openings"]:
+        cursor.execute(
+            """
+            INSERT INTO overtime_openings (
+                period_label, site, shift, location, opening_date, day_name, slot_label, priority,
+                shift_start, shift_end, source_upload_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                opening["period_label"],
+                opening["site"],
+                opening["shift"],
+                opening["location"],
+                opening["opening_date"],
+                opening["day_name"],
+                opening["slot_label"],
+                opening["priority"],
+                opening["shift_start"],
+                opening["shift_end"],
+                upload_id,
+            ),
+        )
+
+    for row in parsed_data["baseline_hours"]:
+        cursor.execute(
+            """
+            INSERT INTO overtime_baseline_hours (
+                period_label, site, shift, roster_name, week_1_hours, week_2_hours, pay_period_hours, uploaded_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["period_label"],
+                row["site"],
+                row["shift"],
+                row["roster_name"],
+                row["week_1_hours"],
+                row["week_2_hours"],
+                row["pay_period_hours"],
+                datetime.now().isoformat(),
+            ),
+        )
+
+    for row in parsed_data["baseline_shifts"]:
+        cursor.execute(
+            """
+            INSERT INTO overtime_baseline_shifts (
+                period_label, site, shift, roster_name, work_date, location, uploaded_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["period_label"],
+                row["site"],
+                row["shift"],
+                row["roster_name"],
+                row["work_date"],
+                row["location"],
+                datetime.now().isoformat(),
+            ),
+            )
+
+
+def remove_overtime_period_data(cursor, period_label, site, shift):
+    cursor.execute(
+        "SELECT file_path FROM overtime_schedule_uploads WHERE period_label = ? AND site = ? AND shift = ?",
+        (period_label, site, shift),
+    )
+    file_paths = [row["file_path"] if isinstance(row, sqlite3.Row) else row[0] for row in cursor.fetchall()]
+
+    cursor.execute(
+        "DELETE FROM overtime_applications WHERE opening_id IN (SELECT id FROM overtime_openings WHERE period_label = ? AND site = ? AND shift = ?)",
+        (period_label, site, shift),
+    )
+    cursor.execute("DELETE FROM overtime_openings WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+    cursor.execute("DELETE FROM overtime_baseline_hours WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+    cursor.execute("DELETE FROM overtime_baseline_shifts WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+    cursor.execute("DELETE FROM overtime_schedule_uploads WHERE period_label = ? AND site = ? AND shift = ?", (period_label, site, shift))
+
+    for file_path in file_paths:
+        try:
+            if file_path and Path(file_path).exists():
+                Path(file_path).unlink()
+        except OSError:
+            pass
+
+
+def get_user_shift_for_overtime(user):
+    shift_label = get_team_metadata(getattr(user, "team", "")).get("shift_label", "")
+    return "day" if shift_label == "Days" else "night" if shift_label == "Nights" else ""
+
+
+def get_current_overtime_period(cursor, site_scope=None):
+    query = "SELECT period_label, site, shift, MAX(uploaded_at) FROM overtime_schedule_uploads"
+    params = []
+    if site_scope:
+        query += " WHERE site = ?"
+        params.append(site_scope)
+    query += " GROUP BY period_label, site, shift ORDER BY MAX(uploaded_at) DESC"
+    cursor.execute(query, params)
+    return cursor.fetchall()
+
+
+def get_user_opening_application_ids(cursor, user_id):
+    cursor.execute(
+        "SELECT opening_id FROM overtime_applications WHERE user_id = ? AND status = 'Applied'",
+        (user_id,),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
+def get_overtime_period_start(cursor, period_label, site):
+    cursor.execute(
+        "SELECT MIN(opening_date) FROM overtime_openings WHERE period_label = ? AND site = ?",
+        (period_label, site),
+    )
+    row = cursor.fetchone()
+    if not row or not row[0]:
+        return None
+    return parse_iso_date(row[0])
+
+
+def get_assigned_overtime_hours_map(cursor, period_label, site, period_start):
+    assigned_hours = {}
+    if not period_start:
+        return assigned_hours
+
+    cursor.execute(
+        """
+        SELECT overtime_openings.opening_date,
+               overtime_openings.shift_start,
+               overtime_openings.shift_end,
+               COALESCE(users.first_name, '') AS first_name,
+               COALESCE(users.last_name, '') AS last_name,
+               users.username AS username
+        FROM overtime_openings
+        JOIN users ON overtime_openings.assigned_user_id = users.id
+        WHERE overtime_openings.period_label = ?
+          AND overtime_openings.site = ?
+          AND overtime_openings.status = 'Assigned'
+        """,
+        (period_label, site),
+    )
+    for row in cursor.fetchall():
+        roster_name = get_roster_name_from_values(row["first_name"], row["last_name"], row["username"])
+        bucket = get_overtime_week_bucket(period_start, row["opening_date"])
+        hours = assigned_hours.setdefault(roster_name, {"week_1": 0.0, "week_2": 0.0, "pay_period": 0.0})
+        slot_hours = get_opening_hours_from_row(row)
+        hours[bucket] += slot_hours
+        hours["pay_period"] += slot_hours
+    return assigned_hours
+
+
+def get_overtime_dashboard_counts(cursor, user):
+    site_scope = get_site_scope_for_user(user)
+    query = "SELECT * FROM overtime_openings WHERE status = 'Open'"
+    params = []
+    if site_scope:
+        query += " AND site = ?"
+        params.append(site_scope)
+    cursor.execute(query, params)
+    openings = [enrich_overtime_opening_row(row) for row in cursor.fetchall()]
+    open_count = len(filter_openings_for_user(openings, user))
+
+    cursor.execute("SELECT COUNT(*) FROM overtime_applications WHERE user_id = ? AND status = 'Applied'", (user.id,))
+    applied_count = cursor.fetchone()[0]
+    return open_count, applied_count
+
+
+def parse_iso_date(value):
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def get_overtime_week_bucket(period_start, opening_date_str):
+    opening_date = parse_iso_date(opening_date_str)
+    return "week_1" if (opening_date - period_start).days < 7 else "week_2"
+
+
+def get_opening_hours_from_row(row):
+    return calculate_schedule_hours(row["shift_start"], row["shift_end"])
+
+
+def auto_assign_overtime_period(cursor, period_label, site, shift, actor_user):
+    cursor.execute(
+        """
+        SELECT *
+        FROM overtime_openings
+        WHERE period_label = ? AND site = ? AND shift = ? AND status = 'Open'
+        ORDER BY CASE priority WHEN 'critical' THEN 0 ELSE 1 END, opening_date, location, id
+        """,
+        (period_label, site, shift),
+    )
+    openings = cursor.fetchall()
+    if not openings:
+        return {"assigned": 0, "unfilled": 0}
+
+    period_start = min(parse_iso_date(row["opening_date"]) for row in openings)
+    assigned_ot_hours = get_assigned_overtime_hours_map(cursor, period_label, site, period_start)
+
+    cursor.execute(
+        """
+        SELECT roster_name, week_1_hours, week_2_hours, pay_period_hours
+        FROM overtime_baseline_hours
+        WHERE period_label = ? AND site = ? AND shift = ?
+        """,
+        (period_label, site, shift),
+    )
+    baseline_hours = {
+        row["roster_name"]: {
+            "week_1": float(row["week_1_hours"] or 0),
+            "week_2": float(row["week_2_hours"] or 0),
+            "pay_period": float(row["pay_period_hours"] or 0),
+        }
+        for row in cursor.fetchall()
+    }
+
+    cursor.execute(
+        """
+        SELECT roster_name, work_date
+        FROM overtime_baseline_shifts
+        WHERE period_label = ? AND site = ? AND shift = ?
+        """,
+        (period_label, site, shift),
+    )
+    assigned_dates = {}
+    for row in cursor.fetchall():
+        assigned_dates.setdefault(row["roster_name"], set()).add(row["work_date"])
+
+    assigned_count = 0
+    unfilled_count = 0
+
+    for opening in openings:
+        slot_hours = get_opening_hours_from_row(opening)
+        bucket = get_overtime_week_bucket(period_start, opening["opening_date"])
+        cursor.execute(
+            """
+            SELECT overtime_applications.id,
+                   overtime_applications.user_id,
+                   COALESCE(users.building, '') AS building,
+                   COALESCE(users.first_name, '') AS first_name,
+                   COALESCE(users.last_name, '') AS last_name,
+                   users.username AS username
+            FROM overtime_applications
+            JOIN users ON overtime_applications.user_id = users.id
+            WHERE overtime_applications.opening_id = ? AND overtime_applications.status = 'Applied'
+            """,
+            (opening["id"],),
+        )
+        applicants = cursor.fetchall()
+        ranked = []
+        for applicant in applicants:
+            roster_name = get_roster_name_from_values(applicant["first_name"], applicant["last_name"], applicant["username"])
+            hours = baseline_hours.setdefault(roster_name, {"week_1": 0.0, "week_2": 0.0, "pay_period": 0.0})
+            ot_hours = assigned_ot_hours.setdefault(roster_name, {"week_1": 0.0, "week_2": 0.0, "pay_period": 0.0})
+            taken_dates = assigned_dates.setdefault(roster_name, set())
+            if opening["opening_date"] in taken_dates:
+                continue
+            if ot_hours[bucket] + slot_hours > MAX_OT_HOURS_PER_WEEK or ot_hours["pay_period"] + slot_hours > MAX_OT_HOURS_PER_PAY_PERIOD:
+                continue
+            if hours[bucket] + slot_hours > 60 or hours["pay_period"] + slot_hours > 120:
+                continue
+            building_match = 0 if applicant["building"] and applicant["building"] == opening["location"] else 1
+            ranked.append(
+                {
+                    "application_id": applicant["id"],
+                    "user_id": applicant["user_id"],
+                    "roster_name": roster_name,
+                    "score": (building_match, hours["pay_period"], hours["week_1"] + hours["week_2"], roster_name),
+                }
+            )
+
+        ranked.sort(key=lambda item: item["score"])
+        if not ranked:
+            unfilled_count += 1
+            continue
+
+        selected = ranked[0]
+        cursor.execute(
+            """
+            UPDATE overtime_openings
+            SET status = 'Assigned', assigned_user_id = ?, assigned_at = ?, assigned_by = ?
+            WHERE id = ?
+            """,
+            (selected["user_id"], datetime.now().isoformat(), actor_user.username, opening["id"]),
+        )
+        cursor.execute(
+            "UPDATE overtime_applications SET status = 'Assigned' WHERE id = ?",
+            (selected["application_id"],),
+        )
+        cursor.execute(
+            "UPDATE overtime_applications SET status = 'Not Selected' WHERE opening_id = ? AND id != ? AND status = 'Applied'",
+            (opening["id"], selected["application_id"]),
+        )
+        baseline_hours[selected["roster_name"]][bucket] += slot_hours
+        assigned_ot_hours[selected["roster_name"]][bucket] += slot_hours
+        assigned_ot_hours[selected["roster_name"]]["pay_period"] += slot_hours
+        baseline_hours[selected["roster_name"]]["pay_period"] += slot_hours
+        assigned_dates[selected["roster_name"]].add(opening["opening_date"])
+        assigned_count += 1
+
+        create_notification(
+            cursor,
+            selected["user_id"],
+            "Overtime assigned",
+            f"You were assigned overtime at {opening['location']} on {opening['opening_date']}.",
+            category="success",
+            link="/overtime",
+        )
+
+    log_audit(
+        cursor,
+        "overtime_opening",
+        None,
+        "auto_assigned",
+        actor_user,
+        details=f"Auto-assigned OT for {period_label} / {site} / {shift}: {assigned_count} assigned, {unfilled_count} unfilled",
+    )
+    return {"assigned": assigned_count, "unfilled": unfilled_count}
+
+
+def assign_overtime_application(cursor, opening, application_id, actor_user, assignment_mode="manual"):
+    cursor.execute(
+        """
+        SELECT overtime_applications.id,
+               overtime_applications.user_id,
+               overtime_applications.note,
+               overtime_applications.status,
+               COALESCE(users.first_name, '') AS first_name,
+               COALESCE(users.last_name, '') AS last_name,
+               users.username AS username
+        FROM overtime_applications
+        JOIN users ON overtime_applications.user_id = users.id
+        WHERE overtime_applications.id = ? AND overtime_applications.opening_id = ?
+        """,
+        (application_id, opening["id"]),
+    )
+    application = cursor.fetchone()
+    if not application:
+        raise ValueError("That overtime application was not found.")
+    if application["status"] != "Applied":
+        raise ValueError("Only pending overtime applications can be assigned.")
+    if opening["status"] != "Open":
+        raise ValueError("That overtime opening is no longer open.")
+
+    period_start = get_overtime_period_start(cursor, opening["period_label"], opening["site"])
+    if period_start is None:
+        raise ValueError("Unable to determine the overtime pay period for that opening.")
+
+    roster_name = get_roster_name_from_values(application["first_name"], application["last_name"], application["username"])
+    bucket = get_overtime_week_bucket(period_start, opening["opening_date"])
+    slot_hours = get_opening_hours_from_row(opening)
+    assigned_ot_hours = get_assigned_overtime_hours_map(cursor, opening["period_label"], opening["site"], period_start)
+    current_ot_hours = assigned_ot_hours.setdefault(roster_name, {"week_1": 0.0, "week_2": 0.0, "pay_period": 0.0})
+    if current_ot_hours[bucket] + slot_hours > MAX_OT_HOURS_PER_WEEK:
+        raise ValueError(f"{get_display_name_from_values(application['first_name'], application['last_name'], application['username'])} would exceed the 20 OT hours weekly limit.")
+    if current_ot_hours["pay_period"] + slot_hours > MAX_OT_HOURS_PER_PAY_PERIOD:
+        raise ValueError(f"{get_display_name_from_values(application['first_name'], application['last_name'], application['username'])} would exceed the 40 OT hours pay-period limit.")
+
+    cursor.execute(
+        """
+        UPDATE overtime_openings
+        SET status = 'Assigned', assigned_user_id = ?, assigned_at = ?, assigned_by = ?
+        WHERE id = ?
+        """,
+        (application["user_id"], datetime.now().isoformat(), actor_user.username, opening["id"]),
+    )
+    cursor.execute("UPDATE overtime_applications SET status = 'Assigned' WHERE id = ?", (application_id,))
+    cursor.execute(
+        "UPDATE overtime_applications SET status = 'Not Selected' WHERE opening_id = ? AND id != ? AND status = 'Applied'",
+        (opening["id"], application_id),
+    )
+
+    selected_name = get_display_name_from_values(application["first_name"], application["last_name"], application["username"])
+    create_notification(
+        cursor,
+        application["user_id"],
+        "Overtime assigned",
+        f"You were assigned overtime at {opening['location']} on {opening['opening_date']}.",
+        category="success",
+        link="/overtime",
+    )
+    log_audit(
+        cursor,
+        "overtime_opening",
+        opening["id"],
+        "manually_assigned" if assignment_mode == "manual" else "assigned",
+        actor_user,
+        target_user_id=application["user_id"],
+        details=f"{selected_name} assigned to OT opening {opening['location']} on {opening['opening_date']}",
+    )
+
+    return {
+        "user_id": application["user_id"],
+        "display_name": selected_name,
+    }
+
+
+def revoke_overtime_assignment(cursor, opening, actor_user):
+    if opening["status"] != "Assigned" or not opening["assigned_user_id"]:
+        raise ValueError("That overtime opening is not currently assigned.")
+
+    cursor.execute(
+        """
+        SELECT overtime_applications.id,
+               COALESCE(users.first_name, '') AS first_name,
+               COALESCE(users.last_name, '') AS last_name,
+               users.username AS username
+        FROM overtime_applications
+        JOIN users ON overtime_applications.user_id = users.id
+        WHERE overtime_applications.opening_id = ? AND overtime_applications.user_id = ? AND overtime_applications.status = 'Assigned'
+        """,
+        (opening["id"], opening["assigned_user_id"]),
+    )
+    assigned_application = cursor.fetchone()
+
+    cursor.execute(
+        """
+        UPDATE overtime_openings
+        SET status = 'Open', assigned_user_id = NULL, assigned_at = NULL, assigned_by = NULL
+        WHERE id = ?
+        """,
+        (opening["id"],),
+    )
+    if assigned_application:
+        cursor.execute(
+            "UPDATE overtime_applications SET status = 'Revoked' WHERE id = ?",
+            (assigned_application["id"],),
+        )
+        assigned_name = get_display_name_from_values(
+            assigned_application["first_name"],
+            assigned_application["last_name"],
+            assigned_application["username"],
+        )
+    else:
+        assigned_name = "the assigned officer"
+
+    create_notification(
+        cursor,
+        opening["assigned_user_id"],
+        "Overtime revoked",
+        f"Your overtime assignment for {opening['location']} on {opening['opening_date']} was revoked.",
+        category="warning",
+        link="/overtime",
+    )
+    log_audit(
+        cursor,
+        "overtime_opening",
+        opening["id"],
+        "revoked",
+        actor_user,
+        target_user_id=opening["assigned_user_id"],
+        details=f"Revoked OT assignment for {assigned_name} at {opening['location']} on {opening['opening_date']}",
+    )
+
+
+def build_overtime_admin_applicant_details(cursor, openings):
+    if not openings:
+        return {}
+
+    opening_ids = [row["id"] for row in openings]
+    placeholders = ",".join("?" for _ in opening_ids)
+
+    baseline_keys = {(row["period_label"], row["site"], row["shift"]) for row in openings}
+    assigned_hours_map = {}
+
+    for period_label, site, shift in baseline_keys:
+        period_start = get_overtime_period_start(cursor, period_label, site)
+        ot_hours = get_assigned_overtime_hours_map(cursor, period_label, site, period_start)
+        for roster_name, hours in ot_hours.items():
+            assigned_hours_map[(period_label, site, shift, roster_name)] = round(hours["pay_period"], 2)
+
+    cursor.execute(
+        f"""
+        SELECT overtime_applications.opening_id,
+               overtime_applications.id AS application_id,
+               overtime_applications.user_id,
+               overtime_applications.note,
+               overtime_applications.status,
+               overtime_applications.submitted_at,
+               COALESCE(users.first_name, '') AS first_name,
+               COALESCE(users.last_name, '') AS last_name,
+               users.username,
+               COALESCE(users.building, '') AS building
+        FROM overtime_applications
+        JOIN users ON overtime_applications.user_id = users.id
+        WHERE overtime_applications.opening_id IN ({placeholders})
+          AND overtime_applications.status IN ('Applied', 'Assigned')
+        ORDER BY overtime_applications.submitted_at ASC
+        """,
+        opening_ids,
+    )
+
+    opening_lookup = {row["id"]: row for row in openings}
+    details_map = {opening_id: [] for opening_id in opening_ids}
+
+    for row in cursor.fetchall():
+        opening = opening_lookup[row["opening_id"]]
+        roster_name = get_roster_name_from_values(row["first_name"], row["last_name"], row["username"])
+        base_key = (opening["period_label"], opening["site"], opening["shift"], roster_name)
+        current_hours = assigned_hours_map.get(base_key, 0.0)
+        details_map[row["opening_id"]].append(
+            {
+                "application_id": row["application_id"],
+                "user_id": row["user_id"],
+                "display_name": get_display_name_from_values(row["first_name"], row["last_name"], row["username"]),
+                "building": row["building"] or "Unassigned",
+                "current_hours": round(current_hours, 2),
+                "note": row["note"] or "",
+                "status": row["status"],
+                "submitted_at": row["submitted_at"],
+            }
+        )
+
+    return details_map
 
 
 def save_pto_document(file_storage, user_id):
@@ -450,7 +1382,7 @@ def get_app_base_url():
 
 
 def user_can_view_all_sites(user):
-    return getattr(user, "role", "") == "admin" or getattr(user, "rank", "") == "Director"
+    return getattr(user, "role", "") == "admin"
 
 
 def get_site_scope_for_user(user):
@@ -475,8 +1407,7 @@ def get_command_staff_users(cursor, site_scope=None):
             WHERE email != ''
               AND (
                     role = 'admin'
-                    OR rank = 'Director'
-                    OR (rank = 'Captain' AND site = ?)
+                    OR (rank IN ('Captain', 'Director') AND site = ?)
               )
             ORDER BY username
             """,
@@ -497,6 +1428,52 @@ def get_command_staff_users(cursor, site_scope=None):
 
 def get_command_staff_emails(cursor, site_scope=None):
     return [row[2] for row in get_command_staff_users(cursor, site_scope) if row[2]]
+
+
+def get_broadcast_recipients(cursor, site_scope=None, rank_filter="", team_filter=""):
+    query = """
+        SELECT id, username, email, rank, team, site,
+               COALESCE(first_name, '') AS first_name,
+               COALESCE(last_name, '') AS last_name
+        FROM users
+        WHERE email != ''
+    """
+    params = []
+    if site_scope:
+        query += " AND site = ?"
+        params.append(site_scope)
+    if rank_filter:
+        query += " AND rank = ?"
+        params.append(rank_filter)
+    if team_filter:
+        query += " AND team = ?"
+        params.append(team_filter)
+    query += " ORDER BY last_name, first_name, username"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    recipients = []
+    for row in rows:
+        recipients.append(
+            {
+                "id": row[0],
+                "username": row[1],
+                "email": row[2],
+                "rank": row[3] or "Officer",
+                "team": row[4] or "",
+                "site": row[5] or "",
+                "display_name": get_display_name_from_values(row[6], row[7], row[1]),
+            }
+        )
+    return recipients
+
+
+def parse_selected_user_ids(values):
+    selected_ids = []
+    for value in values:
+        text = str(value).strip()
+        if text.isdigit():
+            selected_ids.append(int(text))
+    return selected_ids
 
 
 
@@ -578,7 +1555,7 @@ def user_has_rank_access(user, allowed_ranks):
 def get_user_record(cursor, user_id):
     cursor.execute(
         """
-        SELECT id, username, role, rank, email, phone, team, site, COALESCE(first_name, ''), COALESCE(last_name, '')
+        SELECT id, username, role, rank, email, phone, team, site, COALESCE(building, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
         FROM users
         WHERE id = ?
         """,
@@ -596,10 +1573,32 @@ def get_user_record(cursor, user_id):
         "phone": row[5] or "",
         "team": row[6] or "",
         "site": row[7] or "",
-        "first_name": row[8] or "",
-        "last_name": row[9] or "",
-        "display_name": get_display_name_from_values(row[8], row[9], row[1]),
+        "building": row[8] or "",
+        "first_name": row[9] or "",
+        "last_name": row[10] or "",
+        "display_name": get_display_name_from_values(row[9], row[10], row[1]),
     }
+
+
+def count_approved_team_time_off(cursor, team, day_str, exclude_request_id=None):
+    if not team:
+        return 0
+
+    query = """
+        SELECT COUNT(*)
+        FROM pto_requests
+        JOIN users ON pto_requests.user_id = users.id
+        WHERE pto_requests.status = 'Approved'
+          AND pto_requests.start_date <= ?
+          AND pto_requests.end_date >= ?
+          AND COALESCE(users.team, '') = ?
+    """
+    params = [day_str, day_str, team]
+    if exclude_request_id is not None:
+        query += " AND pto_requests.id != ?"
+        params.append(exclude_request_id)
+    cursor.execute(query, params)
+    return cursor.fetchone()[0]
 
 
 def send_user_email(cursor, user_id, subject, body):
@@ -979,9 +1978,8 @@ def iter_dates(start_date_str, end_date_str):
 
 
 # ---------------- USER CLASS ----------------
-# ---------------- USER CLASS ----------------
 class User(UserMixin):
-    def __init__(self, id_, username, password, role, rank="Officer", email="", phone="", team="", site="", first_name="", last_name=""):
+    def __init__(self, id_, username, password, role, rank="Officer", email="", phone="", team="", site="", building="", first_name="", last_name=""):
         self.id = id_
         self.username = username
         self.password = password
@@ -991,6 +1989,7 @@ class User(UserMixin):
         self.phone = phone
         self.team = team
         self.site = site
+        self.building = building or ""
         self.first_name = first_name or ""
         self.last_name = last_name or ""
 
@@ -1002,7 +2001,14 @@ class User(UserMixin):
 def load_user(user_id):
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    c.execute(
+        """
+        SELECT id, username, password, role, rank, email, phone, team, site, COALESCE(building, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
+        FROM users
+        WHERE id=?
+        """,
+        (user_id,),
+    )
     user = c.fetchone()
     conn.close()
     if user:
@@ -1018,7 +2024,14 @@ def login():
 
         conn = sqlite3.connect(DB)
         c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE username=?", (username,))
+        c.execute(
+            """
+            SELECT id, username, password, role, rank, email, phone, team, site, COALESCE(building, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
+            FROM users
+            WHERE username=?
+            """,
+            (username,),
+        )
         user = c.fetchone()
         conn.close()
 
@@ -1071,13 +2084,11 @@ def register():
 
 
 # ---------------- DASHBOARD ----------------
-
-
-# ---------------- DASHBOARD ----------------
 @app.route("/dashboard")
 @login_required
 def dashboard():
     conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
     c.execute("SELECT * FROM pto_requests WHERE user_id=? ORDER BY created_at DESC", (current_user.id,))
@@ -1147,6 +2158,8 @@ def dashboard():
     c.execute("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0", (current_user.id,))
     unread_notifications = c.fetchone()[0]
 
+    overtime_open_count, my_overtime_app_count = get_overtime_dashboard_counts(c, current_user)
+
     pay_period_start, pay_period_end = get_pay_period_bounds()
     c.execute(
         """
@@ -1184,6 +2197,8 @@ def dashboard():
         recent_time_entries=recent_time_entries,
         notifications=notifications,
         unread_notifications=unread_notifications,
+        overtime_open_count=overtime_open_count,
+        my_overtime_app_count=my_overtime_app_count,
         pto_pending=pto_pending,
         swap_pending=swap_pending,
         pay_period_start=pay_period_start,
@@ -1231,7 +2246,493 @@ def notifications_action():
     return redirect(url_for("dashboard"))
 
 
-# ---------------- REQUEST PTO ----------------
+@app.route("/overtime", methods=["GET", "POST"])
+@login_required
+def overtime():
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    site_scope = get_site_scope_for_user(current_user)
+    allowed_teams = get_opposite_ot_teams_for_user(getattr(current_user, "team", "") or "")
+
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+        opening_id = request.form.get("opening_id", "").strip()
+
+        if not opening_id:
+            conn.close()
+            flash("Please choose a valid overtime opening.")
+            return redirect(url_for("overtime"))
+
+        c.execute("SELECT * FROM overtime_openings WHERE id = ?", (opening_id,))
+        opening = c.fetchone()
+        if not opening:
+            conn.close()
+            flash("Overtime opening not found.")
+            return redirect(url_for("overtime"))
+        if site_scope and opening["site"] != site_scope:
+            conn.close()
+            flash("You can only apply to openings for your site.")
+            return redirect(url_for("overtime"))
+        opening_view = enrich_overtime_opening_row(opening)
+        if not user_is_command_team(current_user) and allowed_teams and opening_view["team"] not in allowed_teams:
+            conn.close()
+            flash("You can only apply to overtime for the opposite team rotation.")
+            return redirect(url_for("overtime"))
+        if opening["status"] != "Open":
+            conn.close()
+            flash("That overtime opening is no longer open.")
+            return redirect(url_for("overtime"))
+
+        if action == "apply":
+            c.execute(
+                "SELECT 1 FROM overtime_applications WHERE opening_id = ? AND user_id = ? AND status IN ('Applied', 'Assigned')",
+                (opening_id, current_user.id),
+            )
+            if c.fetchone():
+                flash("You have already applied for that overtime opening.")
+            else:
+                note = request.form.get("note", "").strip()
+                c.execute(
+                    """
+                    INSERT INTO overtime_applications (opening_id, user_id, note, submitted_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (opening_id, current_user.id, note, datetime.now().isoformat()),
+                )
+                create_notification(
+                    c,
+                    current_user.id,
+                    "Overtime application submitted",
+                    f"You applied for overtime at {opening['location']} on {opening['opening_date']}.",
+                    category="info",
+                    link="/overtime",
+                )
+                log_audit(
+                    c,
+                    "overtime_application",
+                    c.lastrowid,
+                    "submitted",
+                    current_user,
+                    details=f"Applied for OT opening {opening['location']} on {opening['opening_date']}",
+                )
+                conn.commit()
+                flash("Overtime application submitted.")
+
+        elif action == "withdraw":
+            c.execute(
+                """
+                UPDATE overtime_applications
+                SET status = 'Withdrawn'
+                WHERE opening_id = ? AND user_id = ? AND status = 'Applied'
+                """,
+                (opening_id, current_user.id),
+            )
+            if c.rowcount:
+                log_audit(
+                    c,
+                    "overtime_application",
+                    None,
+                    "withdrawn",
+                    current_user,
+                    details=f"Withdrew OT application for {opening['location']} on {opening['opening_date']}",
+                )
+                conn.commit()
+                flash("Overtime application withdrawn.")
+            else:
+                flash("No active application was found for that opening.")
+
+        conn.close()
+        return redirect(url_for("overtime"))
+
+    openings_query = """
+        SELECT overtime_openings.*,
+               COALESCE(u.first_name, '') AS assigned_first_name,
+               COALESCE(u.last_name, '') AS assigned_last_name,
+               u.username AS assigned_username,
+               (
+                 SELECT COUNT(*)
+                 FROM overtime_applications oa
+                 WHERE oa.opening_id = overtime_openings.id AND oa.status = 'Applied'
+               ) AS applicant_count
+        FROM overtime_openings
+        LEFT JOIN users u ON overtime_openings.assigned_user_id = u.id
+        WHERE 1 = 1
+    """
+    params = []
+    if site_scope:
+        openings_query += " AND overtime_openings.site = ?"
+        params.append(site_scope)
+    openings_query += " ORDER BY overtime_openings.opening_date, CASE overtime_openings.priority WHEN 'critical' THEN 0 ELSE 1 END, overtime_openings.location"
+    c.execute(openings_query, params)
+    openings = [enrich_overtime_opening_row(row) for row in c.fetchall()]
+    openings = filter_openings_for_user(openings, current_user)
+    openings = sorted(
+        openings,
+        key=lambda opening: (
+            opening["opening_date"],
+            0 if str(opening["priority"]).lower() == "critical" else 1,
+            opening["location"],
+            opening["shift_start"],
+        ),
+    )
+
+    applied_ids = get_user_opening_application_ids(c, current_user.id)
+    c.execute(
+        """
+        SELECT overtime_applications.*, overtime_openings.location, overtime_openings.opening_date, overtime_openings.priority, overtime_openings.shift, overtime_openings.shift_start, overtime_openings.slot_label
+        FROM overtime_applications
+        JOIN overtime_openings ON overtime_applications.opening_id = overtime_openings.id
+        WHERE overtime_applications.user_id = ?
+        ORDER BY overtime_applications.submitted_at DESC
+        LIMIT 12
+        """,
+        (current_user.id,),
+    )
+    my_applications = [dict(row) for row in c.fetchall()]
+    for application in my_applications:
+        team = get_scheduled_team_for_opening(application["opening_date"], application["shift"], application.get("slot_label", ""))
+        team_meta = get_team_metadata(team)
+        application["team_label"] = f"{team_meta['label']} {team_meta['shift_label']}" if team else application["shift"].title()
+    conn.close()
+
+    return render_template(
+        "overtime.html",
+        openings=openings,
+        applied_ids=applied_ids,
+        my_applications=my_applications,
+        site_scope=site_scope,
+        allowed_teams=allowed_teams,
+    )
+
+
+@app.route("/overtime_admin", methods=["GET", "POST"])
+@login_required
+def overtime_admin():
+    if not user_has_rank_access(current_user, SUPERVISOR_RANKS):
+        return "Access Denied"
+
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    site_scope = get_site_scope_for_user(current_user)
+
+    if request.method == "POST":
+        action = request.form.get("action", "").strip()
+        command_staff_action = {
+            "upload_schedule",
+            "auto_assign",
+            "remove_schedule",
+            "approve_application",
+            "deny_application",
+            "revoke_assignment",
+        }
+        if action in command_staff_action and not user_has_rank_access(current_user, COMMAND_TEAM_RANKS):
+            conn.close()
+            flash("Only Training Lieutenants and above can manage overtime assignments.")
+            return redirect(url_for("overtime_admin"))
+
+        if action == "upload_schedule":
+            period_label = request.form.get("period_label", "").strip()
+            site = request.form.get("site", "").strip()
+            shift = request.form.get("shift", "").strip().lower()
+            schedule_file = request.files.get("schedule_file")
+            replace_existing = request.form.get("replace_existing") == "yes"
+
+            if not period_label or not site or site not in SITE_OPTIONS or shift not in {"day", "night"} or not schedule_file:
+                conn.close()
+                flash("Please provide a period label, valid site, shift, and XLSX schedule file.")
+                return redirect(url_for("overtime_admin"))
+            if site_scope and site != site_scope:
+                conn.close()
+                flash("You can only upload schedules for your assigned site.")
+                return redirect(url_for("overtime_admin"))
+
+            c.execute(
+                """
+                SELECT COUNT(*)
+                FROM overtime_schedule_uploads
+                WHERE period_label = ? AND site = ? AND shift = ? AND original_filename = ?
+                """,
+                (period_label, site, shift, schedule_file.filename),
+            )
+            duplicate_name_count = c.fetchone()[0]
+            if duplicate_name_count and not replace_existing:
+                conn.close()
+                flash("A schedule with that same file name is already loaded for this period/site/shift. Remove it first or upload again with Replace checked.")
+                return redirect(url_for("overtime_admin"))
+
+            c.execute(
+                """
+                SELECT COUNT(*)
+                FROM overtime_schedule_uploads
+                WHERE period_label = ? AND site = ? AND shift = ?
+                """,
+                (period_label, site, shift),
+            )
+            existing_period_count = c.fetchone()[0]
+            if existing_period_count and not replace_existing:
+                conn.close()
+                flash("A schedule is already loaded for that period/site/shift. Use Replace Current Schedule or remove the existing one first.")
+                return redirect(url_for("overtime_admin"))
+
+            try:
+                if existing_period_count:
+                    remove_overtime_period_data(c, period_label, site, shift)
+                saved_path = save_overtime_schedule(schedule_file, period_label, site, shift)
+                parsed = parse_overtime_schedule_workbook(saved_path, site, shift, period_label)
+            except Exception as exc:
+                conn.close()
+                flash(f"Schedule upload failed: {exc}")
+                return redirect(url_for("overtime_admin"))
+
+            c.execute(
+                """
+                INSERT INTO overtime_schedule_uploads (period_label, site, shift, original_filename, file_path, uploaded_by, uploaded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (period_label, site, shift, schedule_file.filename, saved_path, current_user.id, datetime.now().isoformat()),
+            )
+            upload_id = c.lastrowid
+            replace_overtime_period_data(c, period_label, site, shift, upload_id, parsed)
+            log_audit(
+                c,
+                "overtime_upload",
+                upload_id,
+                "replaced" if existing_period_count else "uploaded",
+                current_user,
+                details=f"{'Replaced' if existing_period_count else 'Uploaded'} {shift} OT schedule for {site} / {period_label}",
+            )
+            conn.commit()
+            conn.close()
+            flash(f"{'Replaced' if existing_period_count else 'Uploaded'} {shift.title()} schedule for {site} / {period_label}.")
+            return redirect(url_for("overtime_admin"))
+
+        if action == "auto_assign":
+            period_label = request.form.get("period_label", "").strip()
+            site = request.form.get("site", "").strip()
+            shift = request.form.get("shift", "").strip().lower()
+            if not period_label or not site or not shift:
+                conn.close()
+                flash("Please choose a valid period/site/shift for auto assignment.")
+                return redirect(url_for("overtime_admin"))
+            if site_scope and site != site_scope:
+                conn.close()
+                flash("You can only assign overtime for your assigned site.")
+                return redirect(url_for("overtime_admin"))
+
+            result = auto_assign_overtime_period(c, period_label, site, shift, current_user)
+            conn.commit()
+            conn.close()
+            flash(f"Auto-assigned {result['assigned']} openings. {result['unfilled']} remained unfilled.")
+            return redirect(url_for("overtime_admin"))
+
+        if action in {"approve_application", "deny_application"}:
+            application_id = request.form.get("application_id", "").strip()
+            if not application_id:
+                conn.close()
+                flash("Please choose a valid overtime application.")
+                return redirect(url_for("overtime_admin"))
+
+            c.execute(
+                """
+                SELECT overtime_applications.id AS application_id,
+                       overtime_applications.user_id,
+                       overtime_applications.status AS application_status,
+                       overtime_openings.*,
+                       COALESCE(users.first_name, '') AS applicant_first_name,
+                       COALESCE(users.last_name, '') AS applicant_last_name,
+                       users.username AS applicant_username
+                FROM overtime_applications
+                JOIN overtime_openings ON overtime_applications.opening_id = overtime_openings.id
+                JOIN users ON overtime_applications.user_id = users.id
+                WHERE overtime_applications.id = ?
+                """,
+                (application_id,),
+            )
+            application = c.fetchone()
+            if not application:
+                conn.close()
+                flash("That overtime application was not found.")
+                return redirect(url_for("overtime_admin"))
+            if site_scope and application["site"] != site_scope:
+                conn.close()
+                flash("You can only review overtime for your assigned site.")
+                return redirect(url_for("overtime_admin"))
+
+            applicant_name = get_display_name_from_values(
+                application["applicant_first_name"],
+                application["applicant_last_name"],
+                application["applicant_username"],
+            )
+
+            if action == "approve_application":
+                try:
+                    assign_overtime_application(c, application, application["application_id"], current_user, assignment_mode="manual")
+                except ValueError as exc:
+                    conn.close()
+                    flash(str(exc))
+                    return redirect(url_for("overtime_admin"))
+
+                conn.commit()
+                conn.close()
+                flash(f"Approved {applicant_name} for {application['location']} on {application['opening_date']}.")
+                return redirect(url_for("overtime_admin"))
+
+            if application["application_status"] != "Applied":
+                conn.close()
+                flash("Only pending overtime applications can be denied.")
+                return redirect(url_for("overtime_admin"))
+
+            c.execute(
+                "UPDATE overtime_applications SET status = 'Denied' WHERE id = ?",
+                (application["application_id"],),
+            )
+            create_notification(
+                c,
+                application["user_id"],
+                "Overtime request denied",
+                f"Your overtime request for {application['location']} on {application['opening_date']} was denied.",
+                category="warning",
+                link="/overtime",
+            )
+            log_audit(
+                c,
+                "overtime_application",
+                application["application_id"],
+                "denied",
+                current_user,
+                target_user_id=application["user_id"],
+                details=f"Denied OT request from {applicant_name} for {application['location']} on {application['opening_date']}",
+            )
+            conn.commit()
+            conn.close()
+            flash(f"Denied overtime request from {applicant_name}.")
+            return redirect(url_for("overtime_admin"))
+
+        if action == "revoke_assignment":
+            opening_id = request.form.get("opening_id", "").strip()
+            if not opening_id:
+                conn.close()
+                flash("Please choose a valid assigned overtime opening.")
+                return redirect(url_for("overtime_admin"))
+            c.execute("SELECT * FROM overtime_openings WHERE id = ?", (opening_id,))
+            opening = c.fetchone()
+            if not opening:
+                conn.close()
+                flash("That overtime opening was not found.")
+                return redirect(url_for("overtime_admin"))
+            if site_scope and opening["site"] != site_scope:
+                conn.close()
+                flash("You can only revoke overtime for your assigned site.")
+                return redirect(url_for("overtime_admin"))
+            try:
+                revoke_overtime_assignment(c, opening, current_user)
+            except ValueError as exc:
+                conn.close()
+                flash(str(exc))
+                return redirect(url_for("overtime_admin"))
+            conn.commit()
+            conn.close()
+            flash(f"Revoked overtime assignment for {opening['location']} on {opening['opening_date']}.")
+            return redirect(url_for("overtime_admin"))
+
+        if action == "remove_schedule":
+            period_label = request.form.get("period_label", "").strip()
+            site = request.form.get("site", "").strip()
+            shift = request.form.get("shift", "").strip().lower()
+            if not period_label or not site or shift not in {"day", "night"}:
+                conn.close()
+                flash("Please choose a valid uploaded schedule to remove.")
+                return redirect(url_for("overtime_admin"))
+            if site_scope and site != site_scope:
+                conn.close()
+                flash("You can only remove schedules for your assigned site.")
+                return redirect(url_for("overtime_admin"))
+
+            remove_overtime_period_data(c, period_label, site, shift)
+            log_audit(
+                c,
+                "overtime_upload",
+                None,
+                "removed",
+                current_user,
+                details=f"Removed {shift} OT schedule for {site} / {period_label}",
+            )
+            conn.commit()
+            conn.close()
+            flash(f"Removed {shift.title()} schedule for {site} / {period_label}.")
+            return redirect(url_for("overtime_admin"))
+
+    periods = get_current_overtime_period(c, site_scope)
+
+    uploads_query = """
+        SELECT overtime_schedule_uploads.*, users.username
+        FROM overtime_schedule_uploads
+        LEFT JOIN users ON overtime_schedule_uploads.uploaded_by = users.id
+    """
+    upload_params = []
+    if site_scope:
+        uploads_query += " WHERE overtime_schedule_uploads.site = ?"
+        upload_params.append(site_scope)
+    uploads_query += " ORDER BY overtime_schedule_uploads.uploaded_at DESC LIMIT 10"
+    c.execute(uploads_query, upload_params)
+    uploads = c.fetchall()
+
+    openings_query = """
+        SELECT overtime_openings.*,
+               COALESCE(u.first_name, '') AS assigned_first_name,
+               COALESCE(u.last_name, '') AS assigned_last_name,
+               u.username AS assigned_username,
+               (
+                 SELECT COUNT(*)
+                 FROM overtime_applications oa
+                 WHERE oa.opening_id = overtime_openings.id AND oa.status = 'Applied'
+               ) AS applicant_count
+        FROM overtime_openings
+        LEFT JOIN users u ON overtime_openings.assigned_user_id = u.id
+    """
+    open_params = []
+    if site_scope:
+        openings_query += " WHERE overtime_openings.site = ?"
+        open_params.append(site_scope)
+    openings_query += " ORDER BY overtime_openings.opening_date ASC, overtime_openings.site, overtime_openings.shift, CASE overtime_openings.priority WHEN 'critical' THEN 0 ELSE 1 END, overtime_openings.location"
+    c.execute(openings_query, open_params)
+    openings = [enrich_overtime_opening_row(row) for row in c.fetchall()]
+    openings = sorted(
+        openings,
+        key=lambda opening: (
+            opening["opening_date"],
+            0 if str(opening["priority"]).lower() == "critical" else 1,
+            opening["site"],
+            opening["shift"],
+            opening["location"],
+            opening["shift_start"],
+        ),
+    )
+    applicant_details = build_overtime_admin_applicant_details(c, openings)
+    overtime_summary = {
+        "open": sum(1 for row in openings if row["status"] == "Open"),
+        "taken": sum(1 for row in openings if row["status"] == "Assigned"),
+        "pending_applications": sum(row["applicant_count"] for row in openings),
+        "critical_open": sum(1 for row in openings if row["status"] == "Open" and row["priority"] == "critical"),
+    }
+    conn.close()
+
+    return render_template(
+        "overtime_admin.html",
+        periods=periods,
+        uploads=uploads,
+        openings=openings,
+        applicant_details=applicant_details,
+        overtime_summary=overtime_summary,
+        site_options=SITE_OPTIONS,
+        site_scope=site_scope,
+        can_manage_ot=user_has_rank_access(current_user, COMMAND_TEAM_RANKS),
+    )
+
+
 # ---------------- REQUEST PTO ----------------
 @app.route("/request", methods=["GET", "POST"])
 @login_required
@@ -1290,27 +2791,10 @@ def request_pto():
             day_str = current.strftime("%Y-%m-%d")
 
             if not requester_is_command:
-                c.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM pto_requests
-                    JOIN users ON pto_requests.user_id = users.id
-                    WHERE pto_requests.status = 'Approved'
-                      AND pto_requests.start_date <= ?
-                      AND pto_requests.end_date >= ?
-                      AND users.site = ?
-                      AND users.role != 'admin'
-                      AND COALESCE(users.rank, '') NOT IN (?, ?, ?)
-                      AND COALESCE(users.team, '') != 'Command Staff'
-                    """,
-                    (day_str, day_str, current_user.site, *COMMAND_TEAM_RANKS),
-                )
-
-                count = c.fetchone()[0]
-
+                count = count_approved_team_time_off(c, current_user.team, day_str)
                 if count >= MAX_OFFICERS_OFF:
                     conn.close()
-                    flash(f"Too many officers already approved off on {day_str}. Please submit a shift swap request.")
+                    flash(f"Your team already has {MAX_OFFICERS_OFF} officers approved off on {day_str}. Please submit a shift swap request.")
                     return redirect(url_for("shift_swap_request"))
 
             current += timedelta(days=1)
@@ -2224,13 +3708,6 @@ def shift_swap_admin():
     return render_template("shift_swap_admin.html", shift_swaps=shift_swaps)
 
 # ---------------- ADMIN ----------------
-# ---------------- ADMIN ----------------
-
-# ---------------- ADMIN ----------------
-# ---------------- ADMIN ----------------
-
-# ---------------- ADMIN ----------------
-# ---------------- ADMIN ----------------
 
 @app.route("/pto_document/<int:req_id>")
 @login_required
@@ -2282,6 +3759,7 @@ def admin():
         req_id = request.form.get("req_id", "")
         action = request.form["action"]
         decision_note = request.form.get("decision_note", "").strip()
+        force_override = request.form.get("force_override") == "yes" and current_user.role == "admin"
 
         if action.strip().lower() in {"approved", "denied", "clear_single"}:
             c.execute(
@@ -2316,36 +3794,18 @@ def admin():
             requester_is_command = rank_team_is_command(request_rank, request_team, request_role)
             while current <= end_date:
                 day_str = current.strftime("%Y-%m-%d")
-                if not requester_is_command:
-                    c.execute(
-                        """
-                        SELECT COUNT(*)
-                        FROM pto_requests
-                        JOIN users ON pto_requests.user_id = users.id
-                        WHERE pto_requests.status = 'Approved'
-                          AND pto_requests.id != ?
-                          AND pto_requests.start_date <= ?
-                          AND pto_requests.end_date >= ?
-                          AND users.site = ?
-                          AND users.role != 'admin'
-                          AND COALESCE(users.rank, '') NOT IN (?, ?, ?)
-                          AND COALESCE(users.team, '') != 'Command Staff'
-                        """,
-                        (req_id, day_str, day_str, request_site, *COMMAND_TEAM_RANKS),
-                    )
-
-                    count = c.fetchone()[0]
-
+                if not requester_is_command and not force_override:
+                    count = count_approved_team_time_off(c, request_team, day_str, exclude_request_id=req_id)
                     if count >= MAX_OFFICERS_OFF:
                         conn.close()
-                        flash(f"Cannot approve request. Too many officers already off on {day_str}.")
+                        flash(f"Cannot approve request. Team {request_team or 'Unassigned'} already has {MAX_OFFICERS_OFF} officers off on {day_str}.")
                         return redirect(url_for("admin"))
 
                 current += timedelta(days=1)
 
             c.execute(
-                "UPDATE pto_requests SET status = 'Approved', admin_note = ? WHERE id = ?",
-                (decision_note, req_id),
+                "UPDATE pto_requests SET status = 'Approved', admin_note = ?, override_approved = ? WHERE id = ?",
+                (decision_note, 1 if force_override else 0, req_id),
             )
             create_notification(
                 c,
@@ -2366,6 +3826,7 @@ def admin():
                 details=f"{request_kind} approved for {start} through {end} at {request_site or 'Unassigned site'}"
                 + (f". Special leave: {special_type}" if special_type else "")
                 + (". Documentation attached." if documentation_path else "")
+                + (". Admin override used." if force_override else "")
                 + (f". Note: {decision_note}" if decision_note else ""),
             )
             email_error = send_user_email(
@@ -2377,6 +3838,7 @@ def admin():
                     f"Reviewed By: {current_user.username}\n"
                     f"Dates Approved: {start} through {end}\n"
                     f"Special Leave: {special_type or 'None'}\n"
+                    f"Admin Override: {'Yes' if force_override else 'No'}\n"
                     f"Supervisor Note: {decision_note or 'None provided'}\n"
                     f"View Details: {get_app_base_url()}/dashboard\n"
                 ),
@@ -2391,7 +3853,7 @@ def admin():
         elif action.strip().lower() == "denied":
             _, request_user_id, start, end, _, request_kind, special_type, documentation_path, request_site, request_rank, request_team, request_role = request_data
             c.execute(
-                "UPDATE pto_requests SET status = 'Denied', admin_note = ? WHERE id = ?",
+                "UPDATE pto_requests SET status = 'Denied', admin_note = ?, override_approved = 0 WHERE id = ?",
                 (decision_note, req_id),
             )
             create_notification(
@@ -2515,7 +3977,9 @@ def admin():
             return redirect(url_for("admin"))
 
     query = """
-        SELECT pto_requests.*, users.username, users.rank, users.team, users.site
+        SELECT pto_requests.id, pto_requests.user_id, pto_requests.start_date, pto_requests.end_date, pto_requests.status,
+               pto_requests.admin_note, pto_requests.created_at, pto_requests.request_kind, pto_requests.special_type, pto_requests.documentation_path,
+               users.username, users.rank, users.team, users.site, COALESCE(pto_requests.override_approved, 0)
         FROM pto_requests
         JOIN users ON pto_requests.user_id = users.id
     """
@@ -2551,13 +4015,6 @@ def admin():
     )
 
 # ---------------- CALENDAR ----------------
-# ---------------- CALENDAR ----------------
-
-# ---------------- CALENDAR ----------------
-# ---------------- CALENDAR ----------------
-
-# ---------------- CALENDAR ----------------
-# ---------------- CALENDAR ----------------
 @app.route("/calendar")
 @login_required
 def calendar():
@@ -2587,7 +4044,7 @@ def calendar():
 
     query = """
         SELECT pto_requests.start_date, pto_requests.end_date, pto_requests.request_kind,
-               users.username, users.rank, COALESCE(users.first_name, '') AS first_name, COALESCE(users.last_name, '') AS last_name
+               users.username, users.rank, users.team, COALESCE(users.first_name, '') AS first_name, COALESCE(users.last_name, '') AS last_name
         FROM pto_requests
         JOIN users ON pto_requests.user_id = users.id
         WHERE pto_requests.status='Approved'
@@ -2601,6 +4058,7 @@ def calendar():
     conn.close()
 
     calendar_days = {}
+    calendar_team_counts = {}
     calendar_people = {}
     rank_order = {"Director": 1, "Captain": 2, "Training Lieutenant": 3, "Lieutenant": 4, "Sergeant": 5, "Officer": 6}
 
@@ -2612,11 +4070,15 @@ def calendar():
         current = start_date
         while current <= end_date:
             day_str = current.strftime("%Y-%m-%d")
-            calendar_days[day_str] = calendar_days.get(day_str, 0) + 1
+            team_key = row["team"] or "Unassigned"
+            calendar_team_counts.setdefault(day_str, {})
+            calendar_team_counts[day_str][team_key] = calendar_team_counts[day_str].get(team_key, 0) + 1
+            calendar_days[day_str] = max(calendar_days.get(day_str, 0), calendar_team_counts[day_str][team_key])
             calendar_people.setdefault(day_str, []).append(
                 {
                     "display_name": display_name,
                     "rank": row["rank"] or "Officer",
+                    "team": team_key,
                     "request_kind": row["request_kind"] or "PTO",
                 }
             )
@@ -2627,6 +4089,8 @@ def calendar():
 
     month_days = cal.monthcalendar(year, month)
     month_name = cal.month_name[month]
+    month_names = {index: cal.month_name[index] for index in range(1, 13)}
+    year_options = list(range(today.year - 2, today.year + 4))
     visible_days = sum(1 for day in calendar_days if day.startswith(f"{year}-{month:02d}-"))
     total_approved = sum(calendar_days.get(f"{year}-{month:02d}-{day:02d}", 0) for week in month_days for day in week if day)
 
@@ -2638,6 +4102,7 @@ def calendar():
     return render_template(
         "calendar.html",
         calendar_days=calendar_days,
+        calendar_team_counts=calendar_team_counts,
         calendar_people=calendar_people,
         show_calendar_details=show_calendar_details,
         visible_days=visible_days,
@@ -2646,7 +4111,9 @@ def calendar():
         month_days=month_days,
         month=month,
         month_name=month_name,
+        month_names=month_names,
         year=year,
+        year_options=year_options,
         prev_month=prev_month,
         prev_year=prev_year,
         next_month=next_month,
@@ -2654,15 +4121,15 @@ def calendar():
     )
 
 @app.route("/manage_users", methods=["GET", "POST"])
-
-@app.route("/manage_users", methods=["GET", "POST"])
 @login_required
 def manage_users():
     assignment_ranks = {"Training Lieutenant", "Captain", "Director"}
+    building_ranks = {"Lieutenant", "Training Lieutenant", "Captain", "Director"}
     can_assign_site_team = current_user.role == "admin" or current_user.rank in assignment_ranks
+    can_assign_building = current_user.role == "admin" or current_user.rank in building_ranks
     is_full_admin = current_user.role == "admin"
 
-    if not can_assign_site_team:
+    if not (can_assign_site_team or can_assign_building):
         return "Access Denied"
 
     conn = sqlite3.connect(DB)
@@ -2673,9 +4140,19 @@ def manage_users():
         user_id = request.form["user_id"]
 
         admin_only_actions = {"update_role", "update_rank", "clear_pto", "reset_password", "delete_user"}
+        site_team_actions = {"update_team", "update_site"}
+        building_actions = {"update_building"}
         if action in admin_only_actions and not is_full_admin:
             conn.close()
             flash("Only admins can perform that action.")
+            return redirect(url_for("manage_users"))
+        if action in site_team_actions and not can_assign_site_team:
+            conn.close()
+            flash("You do not have permission to update teams or sites.")
+            return redirect(url_for("manage_users"))
+        if action in building_actions and not can_assign_building:
+            conn.close()
+            flash("You do not have permission to update buildings.")
             return redirect(url_for("manage_users"))
 
         if action == "update_rank":
@@ -2749,6 +4226,26 @@ def manage_users():
                 )
                 conn.commit()
                 flash("Site updated successfully.")
+
+        elif action == "update_building":
+            new_building = request.form["building"]
+            if new_building and new_building not in BUILDING_OPTIONS:
+                flash("Please choose a valid building.")
+            else:
+                c.execute("SELECT building FROM users WHERE id=?", (user_id,))
+                old_building = c.fetchone()
+                c.execute("UPDATE users SET building=? WHERE id=?", (new_building, user_id))
+                log_audit(
+                    c,
+                    "user",
+                    int(user_id),
+                    "building_changed",
+                    current_user,
+                    target_user_id=int(user_id),
+                    details=f"Building changed from {(old_building[0] if old_building and old_building[0] else 'Unassigned')} to {new_building or 'Unassigned'}",
+                )
+                conn.commit()
+                flash("Building updated successfully.")
 
         elif action == "update_role":
             new_role = request.form["role"]
@@ -2856,7 +4353,7 @@ def manage_users():
 
     c.execute(
         """
-        SELECT id, username, role, rank, email, phone, team, site, COALESCE(first_name, ''), COALESCE(last_name, '')
+        SELECT id, username, role, rank, email, phone, team, site, COALESCE(building, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
         FROM users
         ORDER BY
             site,
@@ -2881,14 +4378,11 @@ def manage_users():
         "manage_users.html",
         users=users,
         site_options=SITE_OPTIONS,
+        building_options=BUILDING_OPTIONS,
         can_assign_site_team=can_assign_site_team,
+        can_assign_building=can_assign_building,
         is_full_admin=is_full_admin,
     )
-
-
-@app.route("/audit_history")
-
-
 @app.route("/audit_history")
 @login_required
 def audit_history():
@@ -2968,7 +4462,7 @@ def call_list():
 
     site_scope = get_site_scope_for_user(current_user)
     selected_rank = request.args.get("rank", "").strip()
-    rank_options = ["Officer", "Sergeant", "Lieutenant", "Training Lieutenant", "Captain", "Director"]
+    rank_options = list(RANK_OPTIONS)
 
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -3010,11 +4504,90 @@ def call_list():
         selected_rank=selected_rank,
     )
 
-# ---------------- LOGOUT ----------------
-# ---------------- LOGOUT ----------------
 
-# ---------------- LOGOUT ----------------
-# ---------------- LOGOUT ----------------
+@app.route("/command_notice", methods=["GET", "POST"])
+@login_required
+def command_notice():
+    if not user_has_rank_access(current_user, COMMAND_REVIEW_RANKS):
+        return "Access Denied"
+
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    site_scope = get_site_scope_for_user(current_user)
+    selected_user_ids = parse_selected_user_ids(request.form.getlist("selected_user_ids")) if request.method == "POST" else []
+    recipients_preview = get_broadcast_recipients(c, site_scope=site_scope)
+    recipients_by_id = {recipient["id"]: recipient for recipient in recipients_preview}
+
+    if request.method == "POST":
+        subject = request.form.get("subject", "").strip()
+        message = request.form.get("message", "").strip()
+        send_in_app = request.form.get("send_in_app") == "yes"
+        if not subject or not message:
+            conn.close()
+            flash("Please provide both a subject and message.")
+            return redirect(url_for("command_notice"))
+
+        if not selected_user_ids:
+            conn.close()
+            flash("Please select at least one recipient.")
+            return redirect(url_for("command_notice"))
+
+        recipients = [recipients_by_id[user_id] for user_id in selected_user_ids if user_id in recipients_by_id]
+        emails = [recipient["email"] for recipient in recipients if recipient["email"]]
+        if not emails:
+            conn.close()
+            flash("No recipients with email addresses matched your filters.")
+            return redirect(url_for("command_notice"))
+
+        sender_name = get_display_name_from_values(current_user.first_name, current_user.last_name, current_user.username)
+        sender_scope = site_scope or "All Sites"
+        email_body = (
+            f"{message}\n\n"
+            f"Sent By: {sender_name}\n"
+            f"Rank: {current_user.rank}\n"
+            f"Site Scope: {sender_scope}\n"
+            f"Sent At: {datetime.now().isoformat()}"
+        )
+        email_error = send_notification_email(subject, email_body, emails)
+        if email_error:
+            conn.close()
+            flash(email_error)
+            return redirect(url_for("command_notice"))
+
+        if send_in_app:
+            create_notifications_for_users(
+                c,
+                [recipient["id"] for recipient in recipients],
+                subject,
+                message,
+                category="info",
+                link="/dashboard",
+            )
+
+        log_audit(
+            c,
+            "command_notice",
+            None,
+            "sent",
+            current_user,
+            details=f"Sent command notice to {len(recipients)} users for {sender_scope}",
+        )
+        conn.commit()
+        conn.close()
+        flash(f"Notice sent to {len(recipients)} users.")
+        return redirect(url_for("command_notice"))
+
+    conn.close()
+
+    return render_template(
+        "command_notice.html",
+        site_scope=site_scope,
+        selected_user_ids=selected_user_ids,
+        recipients_preview=recipients_preview,
+        recipient_count=len(recipients_preview),
+    )
+
+# ---------------- ACCOUNT SETTINGS ----------------
 @app.route("/account_settings", methods=["GET", "POST"])
 @login_required
 def account_settings():

@@ -70,6 +70,7 @@
             <th>Start</th>
             <th>End</th>
             <th>Status</th>
+            <th>Override</th>
             <th>Supervisor Note</th>
             <th>Action</th>
         </tr>
@@ -91,6 +92,7 @@
             <td>{{ r[2] }}</td>
             <td>{{ r[3] }}</td>
             <td>{{ r[4] }}</td>
+            <td>{% if r[14] %}<span class="chip" style="background:#ede9fe; color:#5b21b6;">Admin Override</span>{% else %}<span class="muted">No</span>{% endif %}</td>
             <td style="min-width:220px; text-align:left;">
                 {% if r[5] %}
                 <div style="margin-bottom:8px; color:#374151;">{{ r[5] }}</div>
@@ -105,6 +107,12 @@
                         <input type="hidden" name="req_id" value="{{ r[0] }}">
                         <textarea name="decision_note" rows="2" placeholder="Optional decision note" style="min-width:200px;">{{ r[5] if r[5] else "" }}</textarea>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            {% if current_user.role == "admin" %}
+                            <label style="display:flex; gap:6px; align-items:center; white-space:nowrap;">
+                                <input type="checkbox" name="force_override" value="yes" style="width:auto;">
+                                Admin override
+                            </label>
+                            {% endif %}
                             <button class="btn approve" name="action" value="Approved">Approve</button>
                             <button class="btn deny" name="action" value="Denied">Deny</button>
                         </div>
